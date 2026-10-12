@@ -149,8 +149,8 @@ def ensure_certificate() -> tuple[str, str, str]:
         .issuer_name(issuer)
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before_utc(now - datetime.timedelta(minutes=5))
-        .not_valid_after_utc(now + datetime.timedelta(days=3650))
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=3650))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
@@ -384,7 +384,7 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self.state.bootstrap_expires = 0.0
             self.state.session_token = token
             save_session_token(token)
-        self.state.status("ফোন pair হয়েছে")
+        self.state.status("Phone paired successfully")
         self._reply(200, {"ok": True, "session_token": token})
 
     def _send_text(self, payload: dict) -> None:
@@ -451,11 +451,11 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
                     409,
                     {"ok": False, "uncertain": inserted > 0, "error": "input_failed"},
                 )
-                self.state.status("Text input ব্যর্থ বা অসম্পূর্ণ হতে পারে")
+                self.state.status("Text input may have failed or may be incomplete")
                 return
             self.state.finish_delivery(message_id, "done")
 
-        self.state.status("Text PC-তে টাইপ হয়েছে")
+        self.state.status("Text was typed on the PC")
         self._reply(200, {"ok": True, "duplicate": False})
 
 
@@ -474,21 +474,21 @@ class PairWindow:
         self.state = state
         self.fingerprint = fingerprint
         self.window = tk.Toplevel(root)
-        self.window.title("ফোন pair করুন")
+        self.window.title("Pair a phone")
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         ttk.Label(
             self.window,
-            text="ফোন ও PC-কে একই Wi‑Fi-তে রাখুন, তারপর app দিয়ে QR code scan করুন।",
+            text="Connect your phone and PC to the same Wi-Fi, then scan this QR code with the app.",
             wraplength=380,
             justify="center",
         ).pack(padx=16, pady=(16, 8))
         self.qr_label = ttk.Label(self.window)
         self.qr_label.pack(padx=16, pady=8)
-        self.status_label = ttk.Label(self.window, text="QR code ৩ মিনিটের জন্য কার্যকর।")
+        self.status_label = ttk.Label(self.window, text="This QR code expires in 3 minutes.")
         self.status_label.pack(padx=16, pady=8)
-        ttk.Button(self.window, text="নতুন QR code", command=self.refresh).pack(
+        ttk.Button(self.window, text="Generate new QR code", command=self.refresh).pack(
             padx=16, pady=(0, 16)
         )
         self.refresh()
@@ -513,7 +513,7 @@ class PairWindow:
         image = image.resize((260, 260), Image.Resampling.NEAREST)
         self.photo = ImageTk.PhotoImage(image)
         self.qr_label.configure(image=self.photo)
-        self.status_label.configure(text=f"{address}:{PORT}  ·  ৩ মিনিটের মধ্যে scan করুন")
+        self.status_label.configure(text=f"{address}:{PORT}  ·  Scan within 3 minutes")
 
     def close(self):
         with self.state.lock:
@@ -551,9 +551,9 @@ class DesktopApp:
         draw.ellipse((9, 9, 55, 55), fill=(245, 255, 250, 255))
         draw.text((19, 18), "V", fill=(33, 110, 80, 255), stroke_width=1)
         menu = pystray.Menu(
-            pystray.MenuItem("ফোন pair করুন…", self.open_pair_window),
+            pystray.MenuItem("Pair phone…", self.open_pair_window),
             pystray.MenuItem("Connection status", self.show_status_dialog),
-            pystray.MenuItem("বন্ধ করুন", self.quit),
+            pystray.MenuItem("Quit", self.quit),
         )
         return pystray.Icon("voice-to-pc", image, APP_NAME, menu)
 
@@ -573,10 +573,10 @@ class DesktopApp:
     def _show_status_dialog(self):
         with self.state.lock:
             paired = bool(self.state.session_token)
-        state_text = "ফোন pair করা আছে" if paired else "ফোন pair করা নেই"
+        state_text = "Phone paired" if paired else "Phone not paired"
         messagebox.showinfo(
             APP_NAME,
-            f"{state_text}\n\nফোন ও PC একই Wi‑Fi-তে রাখুন। Text পাঠানোর আগে PC-তে একটি text field-এ click করুন।",
+            f"{state_text}\n\nKeep your phone and PC on the same Wi-Fi. Click a text field on the PC before sending.",
         )
 
     def open_pair_window(self, icon=None, item=None):
@@ -601,14 +601,15 @@ class DesktopApp:
 
 def main() -> None:
     if os.name != "nt":
-        raise SystemExit("এই helper Windows 10/11-এর জন্য তৈরি।")
+        raise SystemExit("This helper is designed for Windows 10/11.")
     try:
         app = DesktopApp()
         app.run()
     except OSError as exc:
-        messagebox.showerror(APP_NAME, f"Helper চালু করা যায়নি: {exc}")
+        messagebox.showerror(APP_NAME, f"Could not start the helper: {exc}")
         raise
 
 
 if __name__ == "__main__":
     main()
+

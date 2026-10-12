@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
@@ -40,6 +41,7 @@ import javax.net.ssl.X509TrustManager
 
 
 private const val MIC_PERMISSION_REQUEST = 401
+private const val CAMERA_PERMISSION_REQUEST = 402
 private const val PREFS_NAME = "voice_to_pc"
 private const val KEY_ALIAS = "voice_to_pc_connection_key"
 private const val KEY_ONLINE_MODE = "online_mode"
@@ -88,17 +90,17 @@ class MainActivity : Activity() {
         buildUi()
         refreshUi()
         if (privacyOnline == null) {
-            setStatus("শুরু করার আগে Online অথবা Offline recognition বেছে নিন।")
+            setStatus("Choose Online or Offline speech recognition to get started.")
         }
     }
 
     private fun buildUi() {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-            setBackgroundColor(Color.rgb(247, 249, 248))
+            setPadding(dp(20), dp(20), dp(20), dp(24))
+            setBackgroundColor(Color.rgb(244, 247, 245))
         }
-        val scroll = ScrollView(this)
+        val scroll = ScrollView(this).apply { isFillViewport = true }
         scroll.addView(outer)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             scroll.setOnApplyWindowInsetsListener { view, insets ->
@@ -109,74 +111,155 @@ class MainActivity : Activity() {
         }
 
         outer.addView(TextView(this).apply {
-            text = "Voice to PC"
-            textSize = 28f
-            setTextColor(Color.rgb(21, 71, 54))
-            gravity = Gravity.CENTER
+            text = "VOICE TO PC"
+            textSize = 12f
+            letterSpacing = 0.12f
+            setTextColor(Color.rgb(35, 112, 82))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
         }, matchWrap())
         outer.addView(TextView(this).apply {
-            text = "ফোনে বলুন, PC-র active text field-এ লেখা বসবে।"
+            text = "Speak. See it typed."
+            textSize = 30f
+            setTextColor(Color.rgb(24, 45, 36))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(5), 0, dp(3))
+        }, matchWrap())
+        outer.addView(bodyText("Dictate on your phone and send the transcript to the active text field on your PC."), matchWrap())
+        addGap(outer, 18)
+
+        val connectionCard = card()
+        connectionCard.addView(sectionTitle("PC connection"), matchWrap())
+        connectionView = TextView(this).apply {
             textSize = 16f
-            gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(16))
-        }, matchWrap())
-
-        connectionView = TextView(this).apply { textSize = 15f }
-        outer.addView(connectionView, matchWrap())
-        pairButton = button("PC pair করুন") { startQrScan() }
-        outer.addView(pairButton, matchWrap())
-
-        outer.addView(TextView(this).apply {
-            text = "Recognition privacy"
-            textSize = 18f
-            setPadding(0, dp(14), 0, dp(4))
-        }, matchWrap())
-        privacyView = TextView(this).apply {
-            textSize = 13f
-            setTextColor(Color.DKGRAY)
+            setTextColor(Color.rgb(24, 45, 36))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
-        outer.addView(privacyView, matchWrap())
-        onlineButton = button("Online: speech service ব্যবহার করবে") {
+        addGap(connectionCard, 6)
+        connectionCard.addView(connectionView, matchWrap())
+        pairButton = button("Pair with PC", primary = true) { startQrScan() }
+        addGap(connectionCard, 12)
+        connectionCard.addView(pairButton, buttonParams())
+        addCard(outer, connectionCard)
+
+        val recognitionCard = card()
+        recognitionCard.addView(sectionTitle("Speech recognition"), matchWrap())
+        privacyView = bodyText("")
+        addGap(recognitionCard, 4)
+        recognitionCard.addView(privacyView, matchWrap())
+        onlineButton = button("Online recognition") {
             choosePrivacy(online = true)
         }
-        offlineButton = button("Offline only: model না থাকলে পাঠাবে না") {
+        addGap(recognitionCard, 10)
+        recognitionCard.addView(onlineButton, buttonParams())
+        offlineButton = button("Offline only") {
             choosePrivacy(online = false)
         }
-        outer.addView(onlineButton, matchWrap())
-        outer.addView(offlineButton, matchWrap())
+        addGap(recognitionCard, 8)
+        recognitionCard.addView(offlineButton, buttonParams())
+        addCard(outer, recognitionCard)
 
+        val optionsCard = card()
+        optionsCard.addView(sectionTitle("Output and language"), matchWrap())
         outputButton = button("") { toggleOutputMode() }
-        outer.addView(outputButton, matchWrap())
+        addGap(optionsCard, 10)
+        optionsCard.addView(outputButton, buttonParams())
         languageButton = button("") { cycleLanguageMode() }
-        outer.addView(languageButton, matchWrap())
+        addGap(optionsCard, 8)
+        optionsCard.addView(languageButton, buttonParams())
+        addCard(outer, optionsCard)
 
-        micButton = button("🎙  কথা বলুন") { beginDictation() }
-        micButton.textSize = 20f
-        outer.addView(micButton, matchWrap())
+        val dictationCard = card()
+        dictationCard.addView(sectionTitle("Dictation"), matchWrap())
+        micButton = button("Start speaking", primary = true) { beginDictation() }
+        micButton.textSize = 18f
+        micButton.minHeight = dp(64)
+        addGap(dictationCard, 12)
+        dictationCard.addView(micButton, buttonParams())
         statusView = TextView(this).apply {
-            textSize = 15f
+            textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, dp(12), 0, dp(10))
+            setTextColor(Color.rgb(74, 94, 83))
+            setPadding(dp(6), dp(14), dp(6), dp(8))
         }
-        outer.addView(statusView, matchWrap())
-        retryButton = button("আবার পাঠান") { retryPending() }
-        discardButton = button("লেখাটি বাদ দিন") { discardPending() }
-        outer.addView(retryButton, matchWrap())
-        outer.addView(discardButton, matchWrap())
+        dictationCard.addView(statusView, matchWrap())
+        retryButton = button("Retry sending") { retryPending() }
+        discardButton = button("Discard transcript") { discardPending() }
+        addGap(dictationCard, 6)
+        dictationCard.addView(retryButton, buttonParams())
+        addGap(dictationCard, 8)
+        dictationCard.addView(discardButton, buttonParams())
+        addCard(outer, dictationCard)
+
         outer.addView(TextView(this).apply {
-            text = "পিসিতে আগে একটি text field-এ click করে caret রাখুন। এক tap-এ একটি dictation হবে; কথা শেষ হলে পাঠিয়ে mic বন্ধ হবে।"
+            text = "Before speaking, click the target text field on your PC. Each tap records one utterance and sends the final transcript automatically."
             textSize = 13f
-            setTextColor(Color.DKGRAY)
+            setTextColor(Color.rgb(86, 103, 94))
             gravity = Gravity.CENTER
-            setPadding(0, dp(12), 0, 0)
+            setPadding(dp(8), dp(2), dp(8), 0)
         }, matchWrap())
         setContentView(scroll)
     }
 
-    private fun button(label: String, action: () -> Unit): Button = Button(this).apply {
+    private fun button(label: String, primary: Boolean = false, action: () -> Unit): Button = Button(this).apply {
         text = label
         isAllCaps = false
+        textSize = 15f
+        minHeight = dp(52)
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+        background = rounded(if (primary) Color.rgb(31, 112, 79) else Color.rgb(232, 242, 236), 16)
+        setTextColor(if (primary) Color.WHITE else Color.rgb(31, 93, 68))
         setOnClickListener { action() }
+    }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(16), dp(16), dp(16))
+        background = rounded(Color.WHITE, 20, Color.rgb(228, 235, 230))
+    }
+
+    private fun addCard(parent: LinearLayout, child: LinearLayout) {
+        parent.addView(child, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(14) })
+    }
+
+    private fun addGap(parent: LinearLayout, height: Int) {
+        parent.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
+    }
+
+    private fun sectionTitle(label: String) = TextView(this).apply {
+        text = label
+        textSize = 17f
+        setTextColor(Color.rgb(24, 45, 36))
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }
+
+    private fun bodyText(label: String) = TextView(this).apply {
+        text = label
+        textSize = 14f
+        setTextColor(Color.rgb(86, 103, 94))
+        setLineSpacing(dp(2).toFloat(), 1f)
+    }
+
+    private fun buttonParams() = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun rounded(color: Int, radius: Int, stroke: Int? = null) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+        if (stroke != null) setStroke(dp(1), stroke)
+    }
+
+    private fun applyChoiceStyle(button: Button, selected: Boolean) {
+        button.background = rounded(
+            if (selected) Color.rgb(223, 240, 229) else Color.rgb(246, 248, 246),
+            16,
+            if (selected) Color.rgb(65, 142, 103) else Color.rgb(226, 233, 228),
+        )
+        button.setTextColor(if (selected) Color.rgb(30, 102, 68) else Color.rgb(64, 78, 70))
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
@@ -188,19 +271,19 @@ class MainActivity : Activity() {
 
     private fun refreshUi() {
         val connection = SecureConnectionStore(this).load()
-        connectionView.text = if (connection == null) "PC: pair করা নেই" else "PC: pair করা আছে"
+        connectionView.text = if (connection == null) "Not connected" else "Connected"
         privacyView.text = when (privacyOnline) {
-            true -> "Online mode নির্বাচিত। Recognition service audio বাইরে পাঠাতে পারে।"
-            false -> "Offline only নির্বাচিত। ফোনে model না থাকলে recognition ব্যর্থ হবে।"
-            null -> "Audio কোথায় process হবে তা নিজে বেছে নিন।"
+            true -> "Online recognition may send audio to your phone's speech service."
+            false -> "Offline only uses a model on your phone. It will not switch to online recognition."
+            null -> "Choose where speech is recognized. Select a mode before dictation."
         }
-        onlineButton.setBackgroundColor(if (privacyOnline == true) Color.rgb(190, 230, 205) else Color.LTGRAY)
-        offlineButton.setBackgroundColor(if (privacyOnline == false) Color.rgb(190, 230, 205) else Color.LTGRAY)
-        outputButton.text = if (outputMode == "native") "Output: বাংলা অক্ষর   ⇄   Banglish" else "Output: Banglish   ⇄   বাংলা অক্ষর"
+        applyChoiceStyle(onlineButton, privacyOnline == true)
+        applyChoiceStyle(offlineButton, privacyOnline == false)
+        outputButton.text = if (outputMode == "native") "Output: Bengali script  ·  Tap to switch" else "Output: Banglish  ·  Tap to switch"
         languageButton.text = when {
-            Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Speech: Auto Bangla + English   ⇄   ভাষা বাছুন"
-            languageMode == "en" -> "Speech: English   ⇄   ভাষা বাছুন"
-            else -> "Speech: বাংলা   ⇄   ভাষা বাছুন"
+            Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Speech language: Auto (Bangla + English)"
+            languageMode == "en" -> "Speech language: English"
+            else -> "Speech language: Bangla"
         }
         val hasPending = pendingText != null
         retryButton.visibility = if (hasPending) View.VISIBLE else View.GONE
@@ -214,7 +297,7 @@ class MainActivity : Activity() {
         privacyOnline = online
         preferences.edit().putBoolean(KEY_ONLINE_MODE, online).apply()
         refreshUi()
-        setStatus(if (online) "Online recognition বেছে নেওয়া হয়েছে।" else "Offline-only recognition বেছে নেওয়া হয়েছে।")
+        setStatus(if (online) "Online recognition selected." else "Offline-only recognition selected.")
     }
 
     private fun toggleOutputMode() {
@@ -238,19 +321,23 @@ class MainActivity : Activity() {
     }
 
     private fun startQrScan() {
-        if (privacyOnline == null) {
-            setStatus("আগে Online বা Offline recognition বেছে নিন।")
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
             return
         }
+        launchQrScan()
+    }
+
+    private fun launchQrScan() {
         try {
             IntentIntegrator(this)
                 .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-                .setPrompt("PC-তে দেখানো QR code scan করুন")
+                .setPrompt("Scan the QR code shown on your PC")
                 .setBeepEnabled(false)
                 .setOrientationLocked(false)
                 .initiateScan()
-        } catch (_: Exception) {
-            setStatus("QR scanner চালু হয়নি। Camera permission ও ZXing module পরীক্ষা করুন।")
+        } catch (error: Exception) {
+            setStatus("Could not open the QR scanner: ${error.message ?: "scanner unavailable"}")
         }
     }
 
@@ -260,7 +347,7 @@ class MainActivity : Activity() {
         val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
         if (result == null) return
         val raw = result.contents ?: run {
-            setStatus("QR scan বাতিল হয়েছে।")
+            setStatus("QR scan cancelled.")
             return
         }
         pairFromQr(raw)
@@ -270,16 +357,16 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val json = JSONObject(raw)
-                require(json.optString("app") == "voice-to-pc") { "এটি Voice to PC QR নয়।" }
+                require(json.optString("app") == "voice-to-pc") { "This is not a Voice to PC QR code." }
                 val host = json.getString("host")
                 val address = InetAddress.getByName(host)
                 require(address.isSiteLocalAddress || address.isLinkLocalAddress) {
-                    "QR code-এ local PC address নেই।"
+                    "The QR code does not contain a local PC address."
                 }
                 val port = json.getInt("port")
                 val code = json.getString("code")
                 val fingerprint = json.getString("fingerprint").lowercase()
-                require(fingerprint.matches(Regex("[0-9a-f]{64}"))) { "Certificate fingerprint ভুল।" }
+                require(fingerprint.matches(Regex("[0-9a-f]{64}"))) { "The certificate fingerprint is invalid." }
                 val response = postJson(
                     host,
                     port,
@@ -292,17 +379,17 @@ class MainActivity : Activity() {
                 SecureConnectionStore(this).save(PcConnection(host, port, token, fingerprint))
                 runOnUiThread {
                     refreshUi()
-                    setStatus("PC pair হয়েছে। এখন পিসির text field-এ click করে কথা বলুন।")
+                    setStatus("Paired with your PC. Click a text field on the PC before speaking.")
                 }
             } catch (error: Exception) {
-                runOnUiThread { setStatus("Pair করা যায়নি: ${error.message ?: "connection error"}") }
+                runOnUiThread { setStatus("Pairing failed: ${error.message ?: "connection error"}") }
             }
         }
     }
 
     private fun beginDictation() {
         if (privacyOnline == null) {
-            setStatus("আগে Online অথবা Offline recognition বেছে নিন।")
+            setStatus("Choose Online or Offline recognition first.")
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -315,7 +402,7 @@ class MainActivity : Activity() {
             Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
         }
         if (!available) {
-            setStatus(if (privacyOnline == true) "ফোনে speech recognition service পাওয়া যায়নি।" else "এই ফোনে offline speech recognition নেই; Online-এ নিজে mode না বদলালে কাজ করবে না।")
+            setStatus(if (privacyOnline == true) "No speech recognition service is available on this phone." else "Offline speech recognition is unavailable on this phone. Select Online recognition to continue.")
             return
         }
 
@@ -346,36 +433,36 @@ class MainActivity : Activity() {
                 if (privacyOnline == false) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
             listening = true
-            micButton.text = "শুনছি…"
+            micButton.text = "Listening…"
             refreshUi()
-            setStatus("বলুন। কথা শেষ হলে transcript পাঠানো হবে।")
+            setStatus("Speak now. The transcript will be sent when you finish.")
             recognizer?.startListening(intent)
         } catch (error: Exception) {
             stopRecognizer()
-            setStatus("Mic চালু হয়নি: ${error.message ?: "speech service error"}")
+            setStatus("Could not start the microphone: ${error.message ?: "speech service error"}")
         }
     }
 
     private fun recognitionListener() = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
-            runOnUiThread { setStatus("শুনছি…") }
+            runOnUiThread { setStatus("Listening…") }
         }
         override fun onBeginningOfSpeech() = Unit
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() {
-            runOnUiThread { setStatus("কথা শেষ। Transcript তৈরি হচ্ছে…") }
+            runOnUiThread { setStatus("Speech ended. Preparing transcript…") }
         }
         override fun onError(error: Int) {
             runOnUiThread {
                 stopRecognizer()
                 val explanation = when (error) {
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mic permission নেই।"
-                    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "এই ভাষা recognition service সমর্থন করে না।"
-                    SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "এই ভাষার model পাওয়া যায়নি। Offline mode-এ model download করুন বা language toggle বদলান।"
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Recognition service-এ network error হয়েছে।"
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "কথা শনাক্ত হয়নি; কিছু পাঠানো হয়নি।"
-                    else -> "Speech recognition ব্যর্থ হয়েছে (code $error); কিছু পাঠানো হয়নি।"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required."
+                    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "The speech service does not support this language."
+                    SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "The language model is unavailable. Download it for offline use or choose another language."
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "The speech service has a network error."
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech was recognized. Nothing was sent."
+                    else -> "Speech recognition failed (code $error). Nothing was sent."
                 }
                 setStatus(explanation)
             }
@@ -385,7 +472,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 stopRecognizer()
                 if (transcript.isBlank()) {
-                    setStatus("কোনো text শনাক্ত হয়নি।")
+                    setStatus("No text was recognized.")
                     return@runOnUiThread
                 }
                 val output = if (outputMode == "roman") BengaliRomanizer.transliterate(transcript) else transcript
@@ -406,7 +493,7 @@ class MainActivity : Activity() {
         recognizer?.destroy()
         recognizer = null
         if (::micButton.isInitialized) {
-            micButton.text = "🎙  কথা বলুন"
+            micButton.text = "Start speaking"
             refreshUi()
         }
     }
@@ -416,12 +503,12 @@ class MainActivity : Activity() {
         val id = pendingId ?: UUID.randomUUID().toString().also { pendingId = it }
         val connection = SecureConnectionStore(this).load()
         if (connection == null) {
-            setStatus("PC pair করা নেই। Transcript ফোনে রাখা আছে; pair করে আবার পাঠান।")
+            setStatus("Not paired with a PC. The transcript is saved in this session; pair and retry.")
             refreshUi()
             return
         }
         retryButton.isEnabled = false
-        setStatus("PC-তে পাঠানো হচ্ছে…")
+        setStatus("Sending to your PC…")
         worker.execute {
             try {
                 val response = postJson(
@@ -432,20 +519,20 @@ class MainActivity : Activity() {
                     JSONObject().put("id", id).put("text", transcript),
                     connection.sessionToken,
                 )
-                if (!response.optBoolean("ok")) throw IllegalStateException("PC text গ্রহণ করেনি।")
+                if (!response.optBoolean("ok")) throw IllegalStateException("The PC did not accept the text.")
                 runOnUiThread {
                     pendingId = null
                     pendingText = null
                     pendingUncertain = false
                     refreshUi()
-                    setStatus(if (response.optBoolean("duplicate")) "এই text আগেই পাঠানো হয়েছে; পুনরাবৃত্তি ঠেকানো হয়েছে." else "Text PC-তে বসেছে।")
+                    setStatus(if (response.optBoolean("duplicate")) "This text was already sent, so it was not duplicated." else "Text sent to your PC.")
                 }
             } catch (error: Exception) {
                 val uncertain = error.message?.contains("uncertain=true") == true
                 runOnUiThread {
                     pendingUncertain = uncertain
                     refreshUi()
-                    setStatus(if (uncertain) "PC-তে text আংশিক বসে থাকতে পারে। নিরাপত্তার জন্য retry বন্ধ আছে; field পরীক্ষা করে transcript বাদ দিন।" else "পাঠানো যায়নি। Transcript ফোনে আছে; connection ঠিক করে আবার পাঠান।")
+                    setStatus(if (uncertain) "Text may be partially entered on the PC. Retry is disabled; check the field, then discard this transcript." else "Could not send. The transcript is still on your phone; fix the connection and retry.")
                 }
             }
         }
@@ -460,7 +547,7 @@ class MainActivity : Activity() {
         pendingText = null
         pendingUncertain = false
         refreshUi()
-        setStatus("Unsent transcript বাদ দেওয়া হয়েছে।")
+        setStatus("Unsent transcript discarded.")
     }
 
     private fun setStatus(message: String) {
@@ -469,9 +556,15 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == MIC_PERMISSION_REQUEST) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginDictation()
-            else setStatus("Mic permission ছাড়া voice recognition চালু হবে না।")
+        when (requestCode) {
+            CAMERA_PERMISSION_REQUEST -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) launchQrScan()
+                else setStatus("Camera permission is required to scan the PC pairing code.")
+            }
+            MIC_PERMISSION_REQUEST -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginDictation()
+                else setStatus("Microphone permission is required for voice recognition.")
+            }
         }
     }
 
@@ -554,11 +647,11 @@ private fun postJson(
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-            val certificate = chain?.firstOrNull() ?: throw SecurityException("PC certificate নেই")
+            val certificate = chain?.firstOrNull() ?: throw SecurityException("PC certificate is missing.")
             val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
             if (!actual.equals(fingerprint, ignoreCase = true)) {
-                throw SecurityException("PC certificate fingerprint মেলেনি")
+                throw SecurityException("PC certificate fingerprint does not match.")
             }
         }
     }
@@ -676,3 +769,4 @@ private object BengaliRomanizer {
         return result.toString()
     }
 }
+
