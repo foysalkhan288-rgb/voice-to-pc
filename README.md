@@ -43,4 +43,3 @@ The workflow in .github/workflows/build-android-apk.yml builds a debug APK on Gi
 To use it, create a private, empty GitHub repository, extract the project ZIP, and upload the extracted project files to the repository. Include the .github/workflows folder so GitHub can detect the build workflow. After the workflow finishes successfully, download the voice-to-pc-debug-apk artifact and extract app-debug.apk from it. This is a debug-signed APK for sideloading, not a Play Store release.
 
 ZIP-to-APK converter sites do not compile Android source projects. A ZIP must already contain a compiled installable APK for an archive converter to produce an APK file; renaming or repacking the project ZIP does not create an Android application.
-

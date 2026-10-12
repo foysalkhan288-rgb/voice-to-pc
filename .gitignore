@@ -1,0 +1,12 @@
+# Python helper
+windows-helper/.venv/
+windows-helper/__pycache__/
+*.py[cod]
+
+# Android Studio / Gradle
+android-app/.gradle/
+android-app/local.properties
+android-app/**/build/
+
+# Export package prepared for GitHub Actions upload
+/Voice-to-PC-GitHub-build.zip
