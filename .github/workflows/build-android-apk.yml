@@ -38,6 +38,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7_pro
+          disk-size: 4096M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated
           working-directory: android-app
           script: bash scripts/emulator-smoke-test.sh
