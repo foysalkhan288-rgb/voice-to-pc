@@ -10,8 +10,8 @@ android {
         applicationId = "com.ashiqe.voicetopc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     compileOptions {
@@ -21,6 +21,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
 

@@ -1,7 +1,7 @@
 package com.ashiqe.voicetopc
 
 import android.Manifest
-import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -18,6 +18,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONObject
 import java.net.InetAddress
@@ -55,7 +56,7 @@ data class PcConnection(
     val fingerprint: String,
 )
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
@@ -575,8 +576,8 @@ class MainActivity : Activity() {
     }
 }
 
-private class SecureConnectionStore(private val activity: Activity) {
-    private val preferences = activity.getSharedPreferences(PREFS_NAME, Activity.MODE_PRIVATE)
+private class SecureConnectionStore(private val context: Context) {
+    private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(connection: PcConnection) {
         val json = JSONObject()
