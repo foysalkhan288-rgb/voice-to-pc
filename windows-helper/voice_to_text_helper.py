@@ -11,9 +11,11 @@ import os
 import secrets
 import socket
 import ssl
+import sys
 import threading
 import time
 import tkinter as tk
+import winreg
 from ctypes import wintypes
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -29,10 +31,14 @@ from PIL import Image, ImageDraw, ImageTk
 APP_NAME = "Voice to PC"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "VoiceToTextPC"
 PORT = 48765
+DISCOVER_PORT = 48766
 MAX_BODY = 64 * 1024
 MAX_TEXT = 12_000
 PAIR_TTL_SECONDS = 180
 MAX_DELIVERED_IDS = 512
+STARTUP_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_ENTRY = "VoiceToPC"
+DEVICE_NAME = socket.gethostname()
 
 KEY_PATH = APP_DIR / "server-key.pem"
 CERT_PATH = APP_DIR / "server-cert.pem"
@@ -262,6 +268,27 @@ def type_unicode_text(text: str) -> int:
     return int(send_input(len(events), array, ctypes.sizeof(InputEvent)))
 
 
+def autostart_enabled() -> bool:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY) as key:
+        try:
+            winreg.QueryValueEx(key, STARTUP_ENTRY)
+            return True
+        except FileNotFoundError:
+            return False
+
+
+def set_autostart(enabled: bool) -> None:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        if enabled:
+            command = f'"{sys.executable}" "{__file__}"'
+            winreg.SetValueEx(key, STARTUP_ENTRY, 0, winreg.REG_SZ, command)
+        else:
+            try:
+                winreg.DeleteValue(key, STARTUP_ENTRY)
+            except FileNotFoundError:
+                pass
+
+
 class HelperState:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -271,6 +298,7 @@ class HelperState:
         self.fingerprint = ""
         self.delivered_ids = self._load_delivered_ids()
         self.status_callback = None
+        self.events: list[str] = []
 
     def _load_delivered_ids(self) -> dict[str, str]:
         try:
@@ -303,6 +331,9 @@ class HelperState:
         self._save_delivery_states()
 
     def status(self, message: str) -> None:
+        self.events.append(f"{time.strftime('%H:%M:%S')}  {message}")
+        if len(self.events) > 200:
+            del self.events[: len(self.events) - 200]
         callback = self.status_callback
         if callback:
             callback(message)
@@ -345,7 +376,7 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/v1/health":
             with self.state.lock:
                 paired = bool(self.state.session_token)
-            self._reply(200, {"ok": True, "paired": paired})
+            self._reply(200, {"ok": True, "paired": paired, "hostname": DEVICE_NAME})
             return
         self._reply(404, {"ok": False, "error": "not_found"})
 
@@ -385,7 +416,7 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self.state.session_token = token
             save_session_token(token)
         self.state.status("Phone paired successfully")
-        self._reply(200, {"ok": True, "session_token": token})
+        self._reply(200, {"ok": True, "session_token": token, "hostname": DEVICE_NAME})
 
     def _send_text(self, payload: dict) -> None:
         message_id = payload.get("id")
@@ -469,29 +500,53 @@ class VoiceHTTPServer(http.server.ThreadingHTTPServer):
 
 
 class PairWindow:
-    def __init__(self, root: tk.Tk, state: HelperState, fingerprint: str):
+    def __init__(self, root: tk.Tk, state: HelperState, fingerprint: str, on_close=None):
         self.root = root
         self.state = state
         self.fingerprint = fingerprint
+        self.on_close = on_close
         self.window = tk.Toplevel(root)
-        self.window.title("Pair a phone")
+        self.window.title("Voice to PC")
         self.window.resizable(False, False)
+        self.window.configure(bg="#f3f6f4")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         ttk.Label(
             self.window,
-            text="Connect your phone and PC to the same Wi-Fi, then scan this QR code with the app.",
-            wraplength=380,
+            text=f"{APP_NAME}  ·  {DEVICE_NAME}",
             justify="center",
-        ).pack(padx=16, pady=(16, 8))
-        self.qr_label = ttk.Label(self.window)
-        self.qr_label.pack(padx=16, pady=8)
-        self.status_label = ttk.Label(self.window, text="This QR code expires in 3 minutes.")
-        self.status_label.pack(padx=16, pady=8)
-        ttk.Button(self.window, text="Generate new QR code", command=self.refresh).pack(
-            padx=16, pady=(0, 16)
+            font=("Segoe UI", 13, "bold"),
+        ).pack(padx=20, pady=(18, 4))
+        ttk.Label(
+            self.window,
+            text="Phone and PC must share the same Wi-Fi. Scan this QR code once; it is remembered across PC restarts.",
+            wraplength=340,
+            justify="center",
+        ).pack(padx=18, pady=(0, 10))
+        frame = tk.Frame(self.window, bg="#ffffff", highlightbackground="#dbe4df", highlightthickness=1)
+        frame.pack(padx=18, pady=(0, 8))
+        self.qr_label = ttk.Label(frame)
+        self.qr_label.pack(padx=10, pady=10)
+        self.status_label = ttk.Label(self.window, text="Scan within 3 minutes.", justify="center")
+        self.status_label.pack(padx=18, pady=(0, 6))
+        ttk.Button(self.window, text="New QR code", command=self.refresh).pack(padx=18, pady=(0, 8))
+
+        bottom = ttk.Frame(self.window)
+        bottom.pack(fill="x", padx=18, pady=(0, 16))
+        self.autostart_button = ttk.Button(
+            bottom, text=self._autostart_label(), width=18, command=self.toggle_autostart
         )
+        self.autostart_button.pack(side="left")
+        ttk.Button(bottom, text="Hide", width=10, command=self.close).pack(side="right")
         self.refresh()
+
+    @staticmethod
+    def _autostart_label() -> str:
+        return "Start with Windows: On" if autostart_enabled() else "Start with Windows: Off"
+
+    def toggle_autostart(self):
+        set_autostart(not autostart_enabled())
+        self.autostart_button.configure(text=self._autostart_label())
 
     def refresh(self):
         with self.state.lock:
@@ -520,6 +575,8 @@ class PairWindow:
             self.state.bootstrap_code = None
             self.state.bootstrap_expires = 0.0
         self.window.destroy()
+        if self.on_close:
+            self.on_close()
 
 
 class DesktopApp:
@@ -529,9 +586,10 @@ class DesktopApp:
         self.state = HelperState()
         self.state.fingerprint = fingerprint
         self.root = tk.Tk()
-        self.root.withdraw()
         self.root.title(APP_NAME)
-        self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self.root.resizable(False, False)
+        self.root.configure(bg="#f3f6f4")
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.state.status_callback = self.show_status
 
         self.server = VoiceHTTPServer(("0.0.0.0", PORT), VoiceRequestHandler, self.state)
@@ -544,6 +602,49 @@ class DesktopApp:
         self.pair_window: PairWindow | None = None
         self.icon = self._create_tray_icon()
         self.icon.run_detached()
+        self._build_dashboard()
+
+    def _build_dashboard(self):
+        pad = {"padx": 18, "pady": 8}
+        ttk.Label(
+            self.root,
+            text=f"{APP_NAME}  ·  {DEVICE_NAME}",
+            font=("Segoe UI", 14, "bold"),
+            background="#f3f6f4",
+        ).pack(fill="x", **pad)
+        ttk.Label(
+            self.root,
+            text=f"Listening on {local_ipv4_address()}:{PORT}  ·  same Wi-Fi only",
+            background="#f3f6f4",
+        ).pack(fill="x", **pad)
+
+        self.link_label = ttk.Label(self.root, text="", font=("Segoe UI", 11, "bold"))
+        self.link_label.pack(fill="x", **pad)
+
+        buttons = ttk.Frame(self.root)
+        buttons.pack(fill="x", padx=18, pady=(4, 12))
+        ttk.Button(buttons, text="Pair phone", command=self.open_pair_window).pack(side="left")
+        ttk.Button(buttons, text="Start with Windows", command=self.toggle_autostart).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Hide to tray", command=self.hide_window).pack(side="right")
+
+        log_frame = ttk.LabelFrame(self.root, text="Recent activity")
+        log_frame.pack(fill="both", expand=True, padx=18, pady=(0, 16))
+        self.log = tk.Text(log_frame, height=8, width=46, wrap="word", state="disabled", font=("Consolas", 9))
+        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
+        self.log.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.log.pack(side="left", fill="both", expand=True)
+        self._render_log()
+
+    def _render_log(self):
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.insert("end", "\n".join(self.state.events[-60:]) or "No activity yet.")
+        self.log.configure(state="disabled")
+
+    def toggle_autostart(self):
+        set_autostart(not autostart_enabled())
+        self._render_status()
 
     def _create_tray_icon(self):
         image = Image.new("RGBA", (64, 64), (33, 110, 80, 255))
@@ -551,14 +652,15 @@ class DesktopApp:
         draw.ellipse((9, 9, 55, 55), fill=(245, 255, 250, 255))
         draw.text((19, 18), "V", fill=(33, 110, 80, 255), stroke_width=1)
         menu = pystray.Menu(
+            pystray.MenuItem("Show dashboard", self.show_window),
             pystray.MenuItem("Pair phone…", self.open_pair_window),
-            pystray.MenuItem("Connection status", self.show_status_dialog),
             pystray.MenuItem("Quit", self.quit),
         )
         return pystray.Icon("voice-to-pc", image, APP_NAME, menu)
 
     def show_status(self, message: str):
         def notify():
+            self._render_status()
             if not self.icon:
                 return
             try:
@@ -567,17 +669,27 @@ class DesktopApp:
                 pass
         self.root.after(0, notify)
 
-    def show_status_dialog(self, icon=None, item=None):
-        self.root.after(0, self._show_status_dialog)
-
-    def _show_status_dialog(self):
+    def _render_status(self):
         with self.state.lock:
             paired = bool(self.state.session_token)
         state_text = "Phone paired" if paired else "Phone not paired"
-        messagebox.showinfo(
-            APP_NAME,
-            f"{state_text}\n\nKeep your phone and PC on the same Wi-Fi. Click a text field on the PC before sending.",
-        )
+        startup = "on" if autostart_enabled() else "off"
+        self.link_label.configure(text=f"{state_text}  ·  Start with Windows: {startup}")
+        self._render_log()
+
+    def show_window(self, icon=None, item=None):
+        def show():
+            self.root.deiconify()
+            self.root.lift()
+            self._render_status()
+        self.root.after(0, show)
+
+    def hide_window(self, icon=None, item=None):
+        def hide():
+            if self.pair_window and self.pair_window.window.winfo_exists():
+                self.pair_window.close()
+            self.root.withdraw()
+        self.root.after(0, hide)
 
     def open_pair_window(self, icon=None, item=None):
         def show():
@@ -596,6 +708,7 @@ class DesktopApp:
         self.root.after(0, self.root.quit)
 
     def run(self):
+        self._render_status()
         self.root.mainloop()
 
 

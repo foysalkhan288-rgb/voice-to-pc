@@ -6,12 +6,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
@@ -54,6 +56,7 @@ data class PcConnection(
     val port: Int,
     val sessionToken: String,
     val fingerprint: String,
+    val hostname: String = "",
 )
 
 class MainActivity : AppCompatActivity() {
@@ -66,11 +69,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var outputButton: Button
     private lateinit var languageButton: Button
     private lateinit var micButton: Button
+    private lateinit var holdButton: Button
     private lateinit var pairButton: Button
+    private lateinit var reconnectButton: Button
     private lateinit var retryButton: Button
     private lateinit var discardButton: Button
     private lateinit var onlineButton: Button
     private lateinit var offlineButton: Button
+    private lateinit var statusDot: TextView
 
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
@@ -78,8 +84,10 @@ class MainActivity : AppCompatActivity() {
     private var pendingText: String? = null
     private var pendingUncertain: Boolean = false
     private var privacyOnline: Boolean? = null
+    // ponytail: outputMode stays a 3-string ("native"|"roman"|"english"); upgrade to enum when a 4th mode appears.
     private var outputMode: String = "native"
     private var languageMode: String = "auto"
+    private var linkState: String = "unknown" // connected | unreachable | unpaired | unknown
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +100,86 @@ class MainActivity : AppCompatActivity() {
         refreshUi()
         if (privacyOnline == null) {
             setStatus("Choose Online or Offline speech recognition to get started.")
+        }
+        checkLink()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkLink()
+    }
+
+    private fun checkLink() {
+        val connection = SecureConnectionStore(this).load()
+        if (connection == null) {
+            linkState = "unpaired"
+            runOnUiThread { refreshUi() }
+            return
+        }
+        worker.execute {
+            try {
+                val health = getJson(connection.host, connection.port, connection.fingerprint, "/v1/health", connection.sessionToken)
+                if (health.optBoolean("ok")) {
+                    val hostname = health.optString("hostname")
+                    if (hostname.isNotEmpty() && hostname != connection.hostname) {
+                        SecureConnectionStore(this).save(connection.copy(hostname = hostname))
+                    }
+                    linkState = "connected"
+                } else {
+                    linkState = "unreachable"
+                }
+            } catch (_: Exception) {
+                // Same-Wi-Fi sweep so a changed IP no longer needs a new QR scan.
+                linkState = if (discoverPc(connection)) "connected" else "unreachable"
+            }
+            runOnUiThread { refreshUi() }
+        }
+    }
+
+    private fun discoverPc(connection: PcConnection): Boolean {
+        // ponytail: single /24 sweep only; upgrade to mDNS when multiple subnets matter.
+        val subnets = linkedSetOf<String>()
+        try {
+            @Suppress("MissingPermission")
+            val wifi = applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager
+            val ip = wifi?.connectionInfo?.ipAddress ?: 0
+            if (ip != 0) {
+                val octets = intArrayOf(ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+                subnets.add("${octets[0]}.${octets[1]}.${octets[2]}")
+            }
+        } catch (_: Exception) { }
+        try {
+            val hostIp = InetAddress.getByName(connection.host).hostAddress ?: ""
+            val parts = hostIp.split(".")
+            if (parts.size == 4) subnets.add(parts.take(3).joinToString("."))
+        } catch (_: Exception) { }
+        if (subnets.isEmpty()) subnets.add("192.168.1")
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(24)
+        return try {
+            val futures = mutableListOf<java.util.concurrent.Future<Boolean>>()
+            for (subnet in subnets) {
+                for (last in 1..254) {
+                    val host = "$subnet.$last"
+                    futures.add(pool.submit<Boolean> {
+                        try {
+                            val health = getJson(host, connection.port, connection.fingerprint, "/v1/health", connection.sessionToken)
+                            if (health.optBoolean("ok") && health.optString("hostname") == connection.hostname) {
+                                SecureConnectionStore(this).save(connection.copy(host = host))
+                                true
+                            } else false
+                        } catch (_: Exception) { false }
+                    })
+                }
+            }
+            var found = false
+            for (future in futures) {
+                try {
+                    if (future.get(6, java.util.concurrent.TimeUnit.SECONDS)) { found = true; break }
+                } catch (_: Exception) { }
+            }
+            found
+        } finally {
+            pool.shutdownNow()
         }
     }
 
@@ -130,6 +218,12 @@ class MainActivity : AppCompatActivity() {
 
         val connectionCard = card()
         connectionCard.addView(sectionTitle("PC connection"), matchWrap())
+        statusDot = TextView(this).apply {
+            textSize = 28f
+            gravity = Gravity.START
+        }
+        addGap(connectionCard, 4)
+        connectionCard.addView(statusDot, matchWrap())
         connectionView = TextView(this).apply {
             textSize = 16f
             setTextColor(Color.rgb(24, 45, 36))
@@ -140,6 +234,9 @@ class MainActivity : AppCompatActivity() {
         pairButton = button("Pair with PC", primary = true) { startQrScan() }
         addGap(connectionCard, 12)
         connectionCard.addView(pairButton, buttonParams())
+        reconnectButton = button("Reconnect") { checkLink() }
+        addGap(connectionCard, 8)
+        connectionCard.addView(reconnectButton, buttonParams())
         addCard(outer, connectionCard)
 
         val recognitionCard = card()
@@ -176,6 +273,18 @@ class MainActivity : AppCompatActivity() {
         micButton.minHeight = dp(64)
         addGap(dictationCard, 12)
         dictationCard.addView(micButton, buttonParams())
+        holdButton = button("Hold to talk") { }
+        holdButton.textSize = 18f
+        holdButton.minHeight = dp(64)
+        holdButton.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> { beginDictation(); true }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { stopRecognizer(); true }
+                else -> false
+            }
+        }
+        addGap(dictationCard, 8)
+        dictationCard.addView(holdButton, buttonParams())
         statusView = TextView(this).apply {
             textSize = 14f
             gravity = Gravity.CENTER
@@ -272,7 +381,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshUi() {
         val connection = SecureConnectionStore(this).load()
-        connectionView.text = if (connection == null) "Not connected" else "Connected"
+        val dotColor = when {
+            connection == null -> Color.rgb(160, 160, 160)
+            linkState == "connected" -> Color.rgb(31, 140, 80)
+            linkState == "unreachable" -> Color.rgb(190, 60, 45)
+            else -> Color.rgb(200, 150, 40)
+        }
+        if (::statusDot.isInitialized) statusDot.setTextColor(dotColor)
+        if (::statusDot.isInitialized) statusDot.text = "●"
+        connectionView.text = when {
+            connection == null -> "Not connected"
+            linkState == "connected" -> "Connected · ${connection.host}"
+            linkState == "unreachable" -> "PC unreachable · tap Reconnect"
+            else -> "Checking…"
+        }
         privacyView.text = when (privacyOnline) {
             true -> "Online recognition may send audio to your phone's speech service."
             false -> "Offline only uses a model on your phone. It will not switch to online recognition."
@@ -280,9 +402,14 @@ class MainActivity : AppCompatActivity() {
         }
         applyChoiceStyle(onlineButton, privacyOnline == true)
         applyChoiceStyle(offlineButton, privacyOnline == false)
-        outputButton.text = if (outputMode == "native") "Output: Bengali script  ·  Tap to switch" else "Output: Banglish  ·  Tap to switch"
+        outputButton.text = when (outputMode) {
+            "roman" -> "Output: Banglish  ·  Tap to switch"
+            "english" -> "Output: English  ·  Tap to switch"
+            else -> "Output: Bengali script  ·  Tap to switch"
+        }
         languageButton.text = when {
             Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Speech language: Auto (Bangla + English)"
+            outputMode == "english" -> "Speech language: English (output lock)"
             languageMode == "en" -> "Speech language: English"
             else -> "Speech language: Bangla"
         }
@@ -291,7 +418,14 @@ class MainActivity : AppCompatActivity() {
         discardButton.visibility = if (hasPending) View.VISIBLE else View.GONE
         retryButton.isEnabled = connection != null && !listening && !pendingUncertain
         micButton.isEnabled = privacyOnline != null && !listening && !hasPending
+        if (::holdButton.isInitialized) {
+            holdButton.isEnabled = privacyOnline != null && !hasPending
+        }
         pairButton.isEnabled = !listening
+        if (::reconnectButton.isInitialized) {
+            reconnectButton.visibility = if (connection != null && linkState != "connected") View.VISIBLE else View.GONE
+            reconnectButton.isEnabled = !listening
+        }
     }
 
     private fun choosePrivacy(online: Boolean) {
@@ -302,7 +436,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleOutputMode() {
-        outputMode = if (outputMode == "native") "roman" else "native"
+        outputMode = when (outputMode) {
+            "native" -> "roman"
+            "roman" -> "english"
+            else -> "native"
+        }
         preferences.edit().putString(KEY_OUTPUT_MODE, outputMode).apply()
         refreshUi()
     }
@@ -377,8 +515,10 @@ class MainActivity : AppCompatActivity() {
                     null,
                 )
                 val token = response.getString("session_token")
-                SecureConnectionStore(this).save(PcConnection(host, port, token, fingerprint))
+                val hostname = response.optString("hostname")
+                SecureConnectionStore(this).save(PcConnection(host, port, token, fingerprint, hostname))
                 runOnUiThread {
+                    linkState = "connected"
                     refreshUi()
                     setStatus("Paired with your PC. Click a text field on the PC before speaking.")
                 }
@@ -419,6 +559,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                 when {
+                    outputMode == "english" -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                     Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> {
                         putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", "balanced")
                         putStringArrayListExtra(
@@ -476,7 +617,11 @@ class MainActivity : AppCompatActivity() {
                     setStatus("No text was recognized.")
                     return@runOnUiThread
                 }
-                val output = if (outputMode == "roman") BengaliRomanizer.transliterate(transcript) else transcript
+                val output = when (outputMode) {
+                    "roman" -> BengaliRomanizer.transliterate(transcript)
+                    "english" -> EnglishNormalizer.normalize(transcript)
+                    else -> transcript
+                }
                 pendingId = UUID.randomUUID().toString()
                 pendingText = output
                 pendingUncertain = false
@@ -497,6 +642,7 @@ class MainActivity : AppCompatActivity() {
             micButton.text = "Start speaking"
             refreshUi()
         }
+        if (::holdButton.isInitialized) holdButton.text = "Hold to talk"
     }
 
     private fun sendPending() {
@@ -585,6 +731,7 @@ private class SecureConnectionStore(private val context: Context) {
             .put("port", connection.port)
             .put("sessionToken", connection.sessionToken)
             .put("fingerprint", connection.fingerprint)
+            .put("hostname", connection.hostname)
             .toString()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
@@ -612,6 +759,7 @@ private class SecureConnectionStore(private val context: Context) {
                 json.getInt("port"),
                 json.getString("sessionToken"),
                 json.getString("fingerprint"),
+                json.optString("hostname"),
             )
         } catch (_: Exception) {
             preferences.edit().remove("connection_iv").remove("connection_data").apply()
@@ -656,6 +804,40 @@ private fun postJson(
             }
         }
     }
+    return openJson(trustManager, host, port, path, body.toString(), sessionToken, "GET")
+}
+
+private fun getJson(
+    host: String,
+    port: Int,
+    fingerprint: String,
+    path: String,
+    sessionToken: String?,
+): JSONObject {
+    val trustManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+            val certificate = chain?.firstOrNull() ?: throw SecurityException("PC certificate is missing.")
+            val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            if (!actual.equals(fingerprint, ignoreCase = true)) {
+                throw SecurityException("PC certificate fingerprint does not match.")
+            }
+        }
+    }
+    return openJson(trustManager, host, port, path, null, sessionToken, "GET")
+}
+
+private fun openJson(
+    trustManager: X509TrustManager,
+    host: String,
+    port: Int,
+    path: String,
+    requestText: String?,
+    sessionToken: String?,
+    method: String,
+): JSONObject {
     val context = SSLContext.getInstance("TLS").apply {
         init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
     }
@@ -663,18 +845,22 @@ private fun postJson(
     val connection = (url.openConnection() as HttpsURLConnection).apply {
         sslSocketFactory = context.socketFactory
         hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-        connectTimeout = 5_000
-        readTimeout = 8_000
-        requestMethod = "POST"
-        doOutput = true
+        connectTimeout = if (method == "GET") 2_500 else 5_000
+        readTimeout = if (method == "GET") 4_000 else 8_000
+        requestMethod = method
+        if (requestText != null) {
+            doOutput = true
+        }
         setRequestProperty("Content-Type", "application/json; charset=utf-8")
         setRequestProperty("Cache-Control", "no-store")
         if (sessionToken != null) setRequestProperty("Authorization", "Bearer $sessionToken")
     }
     try {
-        val requestBytes = body.toString().toByteArray(Charsets.UTF_8)
-        connection.setFixedLengthStreamingMode(requestBytes.size)
-        connection.outputStream.use { it.write(requestBytes) }
+        if (requestText != null) {
+            val requestBytes = requestText.toByteArray(Charsets.UTF_8)
+            connection.setFixedLengthStreamingMode(requestBytes.size)
+            connection.outputStream.use { it.write(requestBytes) }
+        }
         val status = connection.responseCode
         val stream = if (status in 200..299) connection.inputStream else connection.errorStream
         val responseText = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
@@ -686,6 +872,16 @@ private fun postJson(
         return response
     } finally {
         connection.disconnect()
+    }
+}
+
+private object EnglishNormalizer {
+    // ponytail: puny local cleanup only; upgrade to on-device translation model when user asks for real bn→en translation.
+    fun normalize(text: String): String {
+        var out = text.replace(Regex("[\\u0980-\\u09FF]+")) { m -> BengaliRomanizer.transliterate(m.value) }
+        out = out.replace(Regex("\\s+"), " ").trim()
+        if (out.isEmpty()) return out
+        return out[0].uppercaseChar() + out.substring(1)
     }
 }
 

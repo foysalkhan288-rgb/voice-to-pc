@@ -25,4 +25,5 @@ if errorlevel 1 (
   exit /b 1
 )
 
-call run.bat
+call run.bat >nul 2>nul
+exit /b 0

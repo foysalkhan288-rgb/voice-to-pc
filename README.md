@@ -9,18 +9,11 @@ The workspace contains two parts:
 
 ## Windows helper
 
-Use Python 3.11 or newer on Windows 10/11. On first use, double-click `windows-helper/setup.bat`; it creates a private Python environment, installs the helper's dependencies, then starts the tray app. This step needs an internet connection to download those packages. Later, double-click `windows-helper/run.bat` to start it again.
+Use Python 3.11 or newer on Windows 10/11. On first use, double-click `windows-helper/setup.bat`; it creates a private Python environment, installs the helper's dependencies, then starts it. This step needs an internet connection to download those packages. Later, double-click `windows-helper/run.bat` to start it again — it runs without a console window and leaves a dashboard plus a system tray icon.
 
-```powershell
-cd windows-helper
-setup.bat
-```
+Before the first dictation, click the target text field where the transcript should appear. The helper sends Unicode keyboard input to the foreground window; it does not take focus or alter the clipboard. It will refuse to send while Windows is on a secure desktop such as sign-in or a UAC prompt. Elevated apps may also block input from a non-elevated helper.
 
-The helper appears in the system tray. Choose **ফোন pair করুন…**, then scan the QR code from the Android app. Allow Windows Firewall access on your private Wi-Fi network if prompted. The helper binds to port `48765`, rejects non-private client addresses, and uses a locally generated TLS certificate whose SHA-256 fingerprint is pinned by the phone app.
-
-Before speaking, click the PC text field where the transcript should appear. The helper sends Unicode keyboard input to the foreground window; it does not take focus or alter the clipboard. It will refuse to send while Windows is on a secure desktop such as sign-in or a UAC prompt. Elevated apps may also block input from a non-elevated helper.
-
-The helper stores its certificate and encrypted pairing token under `%LOCALAPPDATA%\\VoiceToTextPC`. It retains only recent message IDs to prevent duplicate typing after a retry; transcript text is never written to disk or logs.
+Keep in mind, the helper stores its certificate and encrypted pairing token under `%LOCALAPPDATA%\\VoiceToTextPC`. A pairing survives a PC restart; if the PC gets a new Wi-Fi IP, the phone rediscovers it automatically on the same subnet. Turn on **Start with Windows** in the dashboard so the helper comes back after every boot without any manual step.
 
 ## Android app
 
@@ -28,7 +21,9 @@ Open `android-app/` in Android Studio with JDK 17 or newer and install Android S
 
 At first launch, select **Online** or **Offline only** recognition. Online recognition can send audio to the phone's speech provider. Offline mode uses Android's on-device recognizer only and never falls back to online; support depends on the phone and downloaded language models. The app requires microphone permission for dictation and camera permission to scan the pairing QR.
 
-Tap the output button to switch between Bengali script and Banglish. Banglish uses a local phonetic transliteration; spellings can differ from personal conventions. On Android 14 or newer, the language button can request automatic Bangla/English switching when the recognition service supports it; otherwise select a language manually.
+Tap the output button to cycle between Bengali script, Banglish, and English. Banglish uses a local phonetic transliteration; spellings can differ from personal conventions. English recognizes in `en-US` and then transliterates any Bengali words left in the transcript, so it is not a real translator. On Android 14 or newer, the language button can request automatic Bangla/English switching when the recognition service supports it; otherwise select a language manually.
+
+**Start speaking** records one utterance and sends it automatically. **Hold to talk** listens while you keep your finger on it and finalizes when you lift it. While the phone is paired, a status dot shows the link: green means reachable, red means the PC was not found. **Reconnect** re-scans the local network for the PC, so a new router-assigned IP no longer forces a fresh QR scan.
 
 If the PC is disconnected, the unsent transcript stays only in the app's current memory. Retry it after reconnecting or discard it. No transcript history is kept.
 
