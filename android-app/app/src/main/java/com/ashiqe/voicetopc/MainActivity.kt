@@ -6,11 +6,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -23,8 +25,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONObject
+import java.io.File
 import java.net.InetAddress
 import java.net.URL
 import java.security.KeyStore
@@ -48,6 +52,7 @@ import javax.net.ssl.X509TrustManager
 private const val MIC_PERMISSION_REQUEST = 401
 private const val CAMERA_PERMISSION_REQUEST = 402
 private const val FINALIZE_TIMEOUT_MS = 10_000L
+private const val UPDATE_APK_NAME = "voice-to-pc.apk"
 private const val PREFS_NAME = "voice_to_pc"
 private const val KEY_ALIAS = "voice_to_pc_connection_key"
 private const val KEY_ONLINE_MODE = "online_mode"
@@ -61,6 +66,8 @@ data class PcConnection(
     val fingerprint: String,
     val hostname: String = "",
 )
+
+data class UpdateInfo(val sha256: String, val size: Long)
 
 class MainActivity : AppCompatActivity() {
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
@@ -80,6 +87,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var onlineButton: Button
     private lateinit var offlineButton: Button
     private lateinit var statusDot: TextView
+    private lateinit var updateButton: Button
+    private lateinit var updateView: TextView
 
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
@@ -91,6 +100,8 @@ class MainActivity : AppCompatActivity() {
     private var outputMode: String = "native"
     private var languageMode: String = "auto"
     private var linkState: String = "unknown" // connected | unreachable | unpaired | unknown
+    private var availableUpdate: UpdateInfo? = null
+    private var updateBusy = false
     private var holdActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
     // Hold-to-talk finalizes through stopListening(); this covers a speech service that never answers.
@@ -249,6 +260,14 @@ class MainActivity : AppCompatActivity() {
         reconnectButton = button("Reconnect") { checkLink() }
         addGap(connectionCard, 8)
         connectionCard.addView(reconnectButton, buttonParams())
+        updateButton = button("Check for app update") { onUpdateButton() }
+        addGap(connectionCard, 8)
+        connectionCard.addView(updateButton, buttonParams())
+        updateView = bodyText("")
+        updateView.textSize = 13f
+        updateView.visibility = View.GONE
+        addGap(connectionCard, 6)
+        connectionCard.addView(updateView, matchWrap())
         addCard(outer, connectionCard)
 
         val recognitionCard = card()
@@ -444,6 +463,21 @@ class MainActivity : AppCompatActivity() {
         if (::reconnectButton.isInitialized) {
             reconnectButton.visibility = if (connection != null && linkState != "connected") View.VISIBLE else View.GONE
             reconnectButton.isEnabled = !listening
+        }
+        if (::updateButton.isInitialized) {
+            updateButton.isEnabled = connection != null && !updateBusy
+            updateButton.text = when {
+                updateBusy -> "Checking for update…"
+                availableUpdate != null -> "Install update"
+                else -> "Check for app update"
+            }
+            val pending = availableUpdate
+            if (pending != null) {
+                updateView.visibility = View.VISIBLE
+                updateView.text = "Update ready · ${pending.size / 1024} KB · tap Install update"
+            } else {
+                updateView.visibility = View.GONE
+            }
         }
     }
 
@@ -739,6 +773,135 @@ class MainActivity : AppCompatActivity() {
         setStatus("Unsent transcript discarded.")
     }
 
+    private fun onUpdateButton() {
+        val connection = SecureConnectionStore(this).load()
+        if (connection == null) {
+            setStatus("Pair with your PC first, then check for updates.")
+            return
+        }
+        if (availableUpdate != null) {
+            installAvailableUpdate(connection)
+            return
+        }
+        updateBusy = true
+        refreshUi()
+        setStatus("Checking the PC for a newer app build…")
+        worker.execute {
+            try {
+                val release = getJson(
+                    connection.host,
+                    connection.port,
+                    connection.fingerprint,
+                    "/v1/app-release",
+                    connection.sessionToken,
+                )
+                val remote = release.optString("sha256").lowercase()
+                val size = release.optLong("size")
+                val found = if (remote.isNotEmpty() && remote != installedApkSha256()) {
+                    UpdateInfo(remote, size)
+                } else {
+                    null
+                }
+                runOnUiThread {
+                    updateBusy = false
+                    availableUpdate = found
+                    refreshUi()
+                    setStatus(
+                        if (found != null) {
+                            "A newer build is on your PC (${found.size / 1024} KB). Tap Install update."
+                        } else {
+                            "The installed app already matches the build on your PC."
+                        }
+                    )
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    setStatus("Could not check for updates: ${error.message ?: "connection error"}")
+                }
+            }
+        }
+    }
+
+    /** SHA-256 of the APK this phone is currently running, used to detect a newer build. */
+    private fun installedApkSha256(): String? = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        File(applicationInfo.sourceDir).inputStream().use { stream ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val read = stream.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun installAvailableUpdate(connection: PcConnection) {
+        if (!packageManager.canRequestPackageInstalls()) {
+            setStatus("Allow Voice to PC to install updates, then tap Install update again.")
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                )
+            } catch (_: Exception) {
+                setStatus("Open Settings and allow installs from Voice to PC.")
+            }
+            return
+        }
+        updateBusy = true
+        refreshUi()
+        setStatus("Downloading the update from your PC…")
+        worker.execute {
+            try {
+                val bytes = getBytes(
+                    connection.host,
+                    connection.port,
+                    connection.fingerprint,
+                    "/v1/app.apk",
+                    connection.sessionToken,
+                )
+                val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val expected = availableUpdate?.sha256
+                if (expected != null && digest != expected) {
+                    throw IllegalStateException("The downloaded file did not match the PC copy.")
+                }
+                val folder = File(cacheDir, "updates").apply { mkdirs() }
+                val target = File(folder, UPDATE_APK_NAME)
+                target.outputStream().use { it.write(bytes) }
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    launchInstaller(target)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    setStatus("Update download failed: ${error.message ?: "connection error"}")
+                }
+            }
+        }
+    }
+
+    private fun launchInstaller(file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            setStatus("Confirm the install in the system dialog.")
+        } catch (error: Exception) {
+            setStatus("Could not open the installer: ${error.message ?: "no installer available"}")
+        }
+    }
+
     private fun setStatus(message: String) {
         if (::statusView.isInitialized) statusView.text = message
     }
@@ -869,6 +1032,52 @@ private fun getJson(
         }
     }
     return openJson(trustManager, host, port, path, null, sessionToken, "GET")
+}
+
+private fun getBytes(
+    host: String,
+    port: Int,
+    fingerprint: String,
+    path: String,
+    sessionToken: String?,
+): ByteArray {
+    val url = URL("https://$host:$port$path")
+    val connection = (url.openConnection() as HttpsURLConnection).apply {
+        sslSocketFactory = pinnedContext(fingerprint).socketFactory
+        hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+        connectTimeout = 5_000
+        readTimeout = 30_000
+        requestMethod = "GET"
+        setRequestProperty("Cache-Control", "no-store")
+        if (sessionToken != null) setRequestProperty("Authorization", "Bearer $sessionToken")
+    }
+    try {
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            throw IllegalStateException("HTTP $status while downloading the update")
+        }
+        return connection.inputStream.use { it.readBytes() }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun pinnedContext(fingerprint: String): SSLContext {
+    val trustManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+            val certificate = chain?.firstOrNull() ?: throw SecurityException("PC certificate is missing.")
+            val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            if (!actual.equals(fingerprint, ignoreCase = true)) {
+                throw SecurityException("PC certificate fingerprint does not match.")
+            }
+        }
+    }
+    return SSLContext.getInstance("TLS").apply {
+        init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
+    }
 }
 
 private fun openJson(
