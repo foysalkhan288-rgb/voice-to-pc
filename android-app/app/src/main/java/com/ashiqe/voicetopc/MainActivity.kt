@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -45,6 +47,7 @@ import javax.net.ssl.X509TrustManager
 
 private const val MIC_PERMISSION_REQUEST = 401
 private const val CAMERA_PERMISSION_REQUEST = 402
+private const val FINALIZE_TIMEOUT_MS = 10_000L
 private const val PREFS_NAME = "voice_to_pc"
 private const val KEY_ALIAS = "voice_to_pc_connection_key"
 private const val KEY_ONLINE_MODE = "online_mode"
@@ -88,6 +91,15 @@ class MainActivity : AppCompatActivity() {
     private var outputMode: String = "native"
     private var languageMode: String = "auto"
     private var linkState: String = "unknown" // connected | unreachable | unpaired | unknown
+    private var holdActive = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    // Hold-to-talk finalizes through stopListening(); this covers a speech service that never answers.
+    private val finalizeTimeout = Runnable {
+        if (listening) {
+            stopRecognizer()
+            setStatus("No speech was recognized. Nothing was sent.")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -278,8 +290,15 @@ class MainActivity : AppCompatActivity() {
         holdButton.minHeight = dp(64)
         holdButton.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> { beginDictation(); true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { stopRecognizer(); true }
+                MotionEvent.ACTION_DOWN -> {
+                    holdActive = true
+                    beginDictation()
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    finalizeListening()
+                    true
+                }
                 else -> false
             }
         }
@@ -575,6 +594,9 @@ class MainActivity : AppCompatActivity() {
                 if (privacyOnline == false) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
             listening = true
+            if (::holdButton.isInitialized) {
+                holdButton.text = if (holdActive) "Release to send" else "Hold to talk"
+            }
             micButton.text = "Listening…"
             refreshUi()
             setStatus("Speak now. The transcript will be sent when you finish.")
@@ -633,8 +655,28 @@ class MainActivity : AppCompatActivity() {
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
+    /** Hold-to-talk: ask the recognizer to finalize so onResults can deliver the transcript. */
+    private fun finalizeListening() {
+        val active = recognizer
+        if (active == null) {
+            stopRecognizer()
+            return
+        }
+        try {
+            active.stopListening()
+            setStatus("Finishing your utterance...")
+            mainHandler.removeCallbacks(finalizeTimeout)
+            mainHandler.postDelayed(finalizeTimeout, FINALIZE_TIMEOUT_MS)
+        } catch (error: Exception) {
+            stopRecognizer()
+            setStatus("Could not finish the recording: ${error.message ?: "speech service error"}")
+        }
+    }
+
     private fun stopRecognizer() {
         listening = false
+        holdActive = false
+        mainHandler.removeCallbacks(finalizeTimeout)
         recognizer?.setRecognitionListener(null)
         recognizer?.destroy()
         recognizer = null
