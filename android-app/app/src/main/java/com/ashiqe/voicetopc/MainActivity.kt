@@ -39,6 +39,8 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -103,6 +105,10 @@ class MainActivity : AppCompatActivity() {
     private var availableUpdate: UpdateInfo? = null
     private var updateBusy = false
     private var holdActive = false
+    // Partial transcripts are previewed on the PC; they are never typed into the focused field.
+    private val previewWorker: ExecutorService = Executors.newSingleThreadExecutor()
+    private val previewLatest = AtomicReference<String?>(null)
+    private val previewScheduled = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     // Hold-to-talk finalizes through stopListening(); this covers a speech service that never answers.
     private val finalizeTimeout = Runnable {
@@ -610,7 +616,7 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 when {
                     outputMode == "english" -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                     Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> {
@@ -654,6 +660,7 @@ class MainActivity : AppCompatActivity() {
         override fun onError(error: Int) {
             runOnUiThread {
                 stopRecognizer()
+                queuePreview("")
                 val explanation = when (error) {
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required."
                     SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "The speech service does not support this language."
@@ -673,11 +680,7 @@ class MainActivity : AppCompatActivity() {
                     setStatus("No text was recognized.")
                     return@runOnUiThread
                 }
-                val output = when (outputMode) {
-                    "roman" -> BengaliRomanizer.transliterate(transcript)
-                    "english" -> EnglishNormalizer.normalize(transcript)
-                    else -> transcript
-                }
+                val output = transformOutput(transcript)
                 pendingId = UUID.randomUUID().toString()
                 pendingText = output
                 pendingUncertain = false
@@ -685,8 +688,62 @@ class MainActivity : AppCompatActivity() {
                 sendPending()
             }
         }
-        override fun onPartialResults(partialResults: Bundle?) = Unit
+        override fun onPartialResults(partialResults: Bundle?) {
+            val text = partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (text.isNotEmpty()) queuePreview(transformOutput(text))
+        }
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
+    }
+
+    private fun transformOutput(text: String): String = when (outputMode) {
+        "roman" -> BengaliRomanizer.transliterate(text)
+        "english" -> EnglishNormalizer.normalize(text)
+        else -> text
+    }
+
+    /**
+     * Preview updates are best-effort: keep only the newest text and drop the rest, so a slow
+     * network can never build a backlog ahead of the final transcript.
+     */
+    private fun queuePreview(text: String) {
+        previewLatest.set(text)
+        schedulePreview()
+    }
+
+    private fun schedulePreview() {
+        if (previewLatest.get() == null) return
+        if (!previewScheduled.compareAndSet(false, true)) return
+        previewWorker.execute {
+            try {
+                while (true) {
+                    val next = previewLatest.getAndSet(null) ?: break
+                    try {
+                        postPreview(next)
+                    } catch (_: Exception) {
+                        // Ignore: the final transcript is what actually gets typed.
+                    }
+                }
+            } finally {
+                previewScheduled.set(false)
+            }
+            if (previewLatest.get() != null) schedulePreview()
+        }
+    }
+
+    private fun postPreview(text: String) {
+        val connection = SecureConnectionStore(this).load() ?: return
+        postJson(
+            connection.host,
+            connection.port,
+            connection.fingerprint,
+            "/v1/preview",
+            JSONObject().put("text", text),
+            connection.sessionToken,
+        )
     }
 
     /** Hold-to-talk: ask the recognizer to finalize so onResults can deliver the transcript. */
@@ -923,6 +980,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         stopRecognizer()
         worker.shutdownNow()
+        previewWorker.shutdownNow()
         super.onDestroy()
     }
 }
