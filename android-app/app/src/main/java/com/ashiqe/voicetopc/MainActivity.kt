@@ -1098,7 +1098,7 @@ internal fun postJson(
             }
         }
     }
-    return openJson(trustManager, host, port, path, body.toString(), sessionToken, "GET")
+    return openJson(trustManager, host, port, path, body.toString(), sessionToken, "POST")
 }
 
 internal fun getJson(
