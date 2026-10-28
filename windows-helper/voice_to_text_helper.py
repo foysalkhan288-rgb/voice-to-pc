@@ -159,9 +159,16 @@ def ensure_certificate(app_dir_path: Path | None = None) -> tuple[str, str, str]
     cert_path = directory / "server-cert.pem"
     directory.mkdir(parents=True, exist_ok=True)
     if key_path.exists() and cert_path.exists():
-        certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
-        fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
-        return str(key_path), str(cert_path), fingerprint
+        try:
+            certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+            return str(key_path), str(cert_path), fingerprint
+        except (ValueError, OSError):
+            for name in ("server-key.pem", "server-cert.pem"):
+                try:
+                    (directory / name).unlink()
+                except FileNotFoundError:
+                    pass
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(
