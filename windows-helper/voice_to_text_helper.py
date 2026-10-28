@@ -14,36 +14,44 @@ import ssl
 import sys
 import threading
 import time
-import tkinter as tk
 import winreg
 from ctypes import wintypes
 from pathlib import Path
-from tkinter import messagebox, ttk
-import pystray
+from typing import Callable
 import qrcode
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image
+from settings import AppSettings, app_dir
 
 
 APP_NAME = "Voice to PC"
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "VoiceToTextPC"
+APP_DIR = app_dir()
 PORT = 48765
-DISCOVER_PORT = 48766
 MAX_BODY = 64 * 1024
 MAX_TEXT = 12_000
 PAIR_TTL_SECONDS = 180
 MAX_DELIVERED_IDS = 512
+APP_RELEASE_NAME = "voice-to-pc.apk"
+PREVIEW_TTL_SECONDS = 6.0
+RELEASE_WATCH_SECONDS = 2.0
+MIN_APK_BYTES = 64 * 1024
+# The Gradle output, so a fresh build is served without running publish-apk.bat.
+BUILD_APK_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "android-app"
+    / "app"
+    / "build"
+    / "outputs"
+    / "apk"
+    / "debug"
+    / "app-debug.apk"
+)
 STARTUP_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_ENTRY = "VoiceToPC"
 DEVICE_NAME = socket.gethostname()
-
-KEY_PATH = APP_DIR / "server-key.pem"
-CERT_PATH = APP_DIR / "server-cert.pem"
-SESSION_PATH = APP_DIR / "session-token.dpapi"
-DELIVERED_PATH = APP_DIR / "delivered-ids.json"
 
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
@@ -118,31 +126,42 @@ def unprotect_for_current_user(data: bytes) -> bytes:
         kernel32.LocalFree(destination.pbData)
 
 
-def save_session_token(token: str) -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = SESSION_PATH.with_suffix(".tmp")
+def save_session_token(token: str, app_dir_path: Path | None = None) -> None:
+    directory = app_dir_path or APP_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / "session-token.tmp"
     temporary.write_bytes(protect_for_current_user(token.encode("utf-8")))
-    os.replace(temporary, SESSION_PATH)
+    os.replace(temporary, directory / "session-token.dpapi")
 
 
-def load_session_token() -> str | None:
+def load_session_token(app_dir_path: Path | None = None) -> str | None:
     try:
-        return unprotect_for_current_user(SESSION_PATH.read_bytes()).decode("utf-8")
+        return unprotect_for_current_user(
+            (app_dir_path or APP_DIR).joinpath("session-token.dpapi").read_bytes()
+        ).decode("utf-8")
     except FileNotFoundError:
         return None
     except (OSError, UnicodeError):
         return None
 
 
-def ensure_certificate() -> tuple[str, str, str]:
+def delete_session_token(app_dir_path: Path | None = None) -> None:
+    try:
+        (app_dir_path or APP_DIR).joinpath("session-token.dpapi").unlink()
+    except FileNotFoundError:
+        pass
+
+
+def ensure_certificate(app_dir_path: Path | None = None) -> tuple[str, str, str]:
     """Create a local self-signed certificate; the Android app pins its fingerprint."""
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    if KEY_PATH.exists() and CERT_PATH.exists():
-        key_pem = KEY_PATH.read_bytes()
-        cert_pem = CERT_PATH.read_bytes()
-        certificate = x509.load_pem_x509_certificate(cert_pem)
+    directory = app_dir_path or APP_DIR
+    key_path = directory / "server-key.pem"
+    cert_path = directory / "server-cert.pem"
+    directory.mkdir(parents=True, exist_ok=True)
+    if key_path.exists() and cert_path.exists():
+        certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
         fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
-        return str(KEY_PATH), str(CERT_PATH), fingerprint
+        return str(key_path), str(cert_path), fingerprint
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(
@@ -163,17 +182,17 @@ def ensure_certificate() -> tuple[str, str, str]:
         )
         .sign(private_key, hashes.SHA256())
     )
-    KEY_PATH.write_bytes(
+    key_path.write_bytes(
         private_key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
     )
-    CERT_PATH.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     return (
-        str(KEY_PATH),
-        str(CERT_PATH),
+        str(key_path),
+        str(cert_path),
         certificate.fingerprint(hashes.SHA256()).hex(),
     )
 
@@ -199,6 +218,44 @@ def client_is_private(address: str) -> bool:
         return parsed.is_private or parsed.is_loopback or parsed.is_link_local
     except ValueError:
         return False
+
+
+def apk_looks_complete(path: Path) -> bool:
+    """A real APK is a ZIP with a central directory at the end; a half-written build is not."""
+    try:
+        size = path.stat().st_size
+        if size < MIN_APK_BYTES:
+            return False
+        with path.open("rb") as handle:
+            if handle.read(4) != b"PK\x03\x04":
+                return False
+            handle.seek(max(0, size - 66560))
+            return b"PK\x05\x06" in handle.read()
+    except OSError:
+        return False
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def newest_apk(paths) -> Path | None:
+    """The freshest complete APK wins, so a Gradle build needs no publish step."""
+    newest: tuple[Path, int] | None = None
+    for path in paths:
+        if not apk_looks_complete(path):
+            continue
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        if newest is None or mtime > newest[1]:
+            newest = (path, mtime)
+    return newest[0] if newest else None
 
 
 def on_interactive_desktop() -> bool:
@@ -242,8 +299,7 @@ class InputEvent(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("union", InputUnion)]
 
 
-def type_unicode_text(text: str) -> int:
-    """Type Unicode into the currently focused Windows control without the clipboard."""
+def _events_for_text(text: str) -> list[InputEvent]:
     units = text.encode("utf-16-le", errors="strict")
     events: list[InputEvent] = []
     for offset in range(0, len(units), 2):
@@ -257,7 +313,10 @@ def type_unicode_text(text: str) -> int:
             0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0
         )
         events.extend((down, up))
+    return events
 
+
+def _send_input(events: list[InputEvent]) -> int:
     if not events:
         return 0
     array_type = InputEvent * len(events)
@@ -266,6 +325,18 @@ def type_unicode_text(text: str) -> int:
     send_input.argtypes = (wintypes.UINT, ctypes.POINTER(InputEvent), ctypes.c_int)
     send_input.restype = wintypes.UINT
     return int(send_input(len(events), array, ctypes.sizeof(InputEvent)))
+
+
+def type_unicode_text(text: str, delay_ms: float = 0.0) -> int:
+    """Type Unicode into the currently focused Windows control without the clipboard."""
+    if delay_ms <= 0:
+        return _send_input(_events_for_text(text))
+    sent = 0
+    pause = delay_ms / 1000.0
+    for character in text:
+        sent += _send_input(_events_for_text(character))
+        time.sleep(pause)
+    return sent
 
 
 def autostart_enabled() -> bool:
@@ -290,19 +361,93 @@ def set_autostart(enabled: bool) -> None:
 
 
 class HelperState:
-    def __init__(self) -> None:
+    def __init__(self, app_dir_path: Path | None = None) -> None:
         self.lock = threading.RLock()
-        self.session_token = load_session_token()
+        self.app_dir = app_dir_path or APP_DIR
+        self.settings: AppSettings | None = None
+        self.session_token = load_session_token(self.app_dir)
         self.bootstrap_code: str | None = None
         self.bootstrap_expires = 0.0
         self.fingerprint = ""
         self.delivered_ids = self._load_delivered_ids()
         self.status_callback = None
+        self.preview_callback: Callable[[], None] | None = None
+        self.preview_text = ""
+        self.preview_updated = 0.0
+        self._release_source: tuple[str, int, int] | None = None
         self.events: list[str] = []
+
+    @property
+    def delivered_path(self) -> Path:
+        return self.app_dir / "delivered-ids.json"
+
+    @property
+    def app_release_path(self) -> Path:
+        """APK the phone can install; publish-apk.bat copies a new build here."""
+        return self.app_dir / APP_RELEASE_NAME
+
+    def app_release(self) -> dict | None:
+        path = self.app_release_path
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        return {
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "modified": int(path.stat().st_mtime),
+        }
+
+    def release_sources(self) -> list[Path]:
+        """Where a build may appear: the served copy and the Gradle output."""
+        return [self.app_release_path, BUILD_APK_PATH]
+
+    def sync_app_release(self, sources=None) -> dict | None:
+        """Copy the newest complete build into the served path; None when nothing changed."""
+        newest = newest_apk(self.release_sources() if sources is None else sources)
+        if newest is None:
+            return None
+        try:
+            stat = newest.stat()
+        except OSError:
+            return None
+        signature = (str(newest), stat.st_mtime_ns, stat.st_size)
+        if signature == self._release_source:
+            return None
+
+        target = self.app_release_path
+        try:
+            unchanged = target.exists() and (
+                target.samefile(newest)
+                or (
+                    target.stat().st_size == stat.st_size
+                    and sha256_file(target) == sha256_file(newest)
+                )
+            )
+        except OSError:
+            unchanged = False
+        if unchanged:
+            self._release_source = signature
+            return None
+
+        try:
+            data = newest.read_bytes()
+            self.app_dir.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(APP_RELEASE_NAME + ".tmp")
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        except OSError:
+            return None
+        self._release_source = signature
+        return {
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "name": newest.name,
+        }
 
     def _load_delivered_ids(self) -> dict[str, str]:
         try:
-            values = json.loads(DELIVERED_PATH.read_text(encoding="utf-8"))
+            values = json.loads(self.delivered_path.read_text(encoding="utf-8"))
             if isinstance(values, dict):
                 return {str(key): str(value) for key, value in list(values.items())[-MAX_DELIVERED_IDS:]}
             if isinstance(values, list):
@@ -313,10 +458,10 @@ class HelperState:
 
     def _save_delivery_states(self) -> None:
         self.delivered_ids = dict(list(self.delivered_ids.items())[-MAX_DELIVERED_IDS:])
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-        temporary = DELIVERED_PATH.with_suffix(".tmp")
+        self.app_dir.mkdir(parents=True, exist_ok=True)
+        temporary = self.app_dir / "delivered-ids.tmp"
         temporary.write_text(json.dumps(self.delivered_ids), encoding="utf-8")
-        os.replace(temporary, DELIVERED_PATH)
+        os.replace(temporary, self.delivered_path)
 
     def reserve_delivery(self, message_id: str) -> None:
         self.delivered_ids[message_id] = "sending"
@@ -329,6 +474,28 @@ class HelperState:
     def forget_delivery(self, message_id: str) -> None:
         self.delivered_ids.pop(message_id, None)
         self._save_delivery_states()
+
+    def set_preview(self, text: str) -> None:
+        """Hold the in-progress transcript for the dashboard; nothing is typed for it."""
+        with self.lock:
+            self.preview_text = text
+            self.preview_updated = time.monotonic()
+        callback = self.preview_callback
+        if callback:
+            try:
+                callback()
+            except Exception:  # pragma: no cover - a broken GUI must not break delivery
+                pass
+
+    def clear_preview(self) -> None:
+        self.set_preview("")
+
+    def preview_snapshot(self) -> tuple[str, float]:
+        with self.lock:
+            text = self.preview_text
+            updated = self.preview_updated
+        age = time.monotonic() - updated if updated else float("inf")
+        return text, age
 
     def status(self, message: str) -> None:
         self.events.append(f"{time.strftime('%H:%M:%S')}  {message}")
@@ -359,6 +526,22 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _reply_bytes(self, status: int, content_type: str, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorised(self) -> bool:
+        token = self.headers.get("Authorization", "")
+        if not token.startswith("Bearer "):
+            return False
+        with self.state.lock:
+            expected = self.state.session_token
+        return bool(expected) and hmac.compare_digest(token[7:], expected)
+
     def _read_json(self) -> dict:
         raw_length = self.headers.get("Content-Length", "")
         if not raw_length.isdecimal() or int(raw_length) > MAX_BODY:
@@ -378,6 +561,27 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
                 paired = bool(self.state.session_token)
             self._reply(200, {"ok": True, "paired": paired, "hostname": DEVICE_NAME})
             return
+        if self.path == "/v1/app-release":
+            if not self._authorised():
+                self._reply(401, {"ok": False, "error": "not_paired"})
+                return
+            release = self.state.app_release()
+            if release is None:
+                self._reply(404, {"ok": False, "error": "no_app_release"})
+                return
+            self._reply(200, {"ok": True, **release})
+            return
+        if self.path == "/v1/app.apk":
+            if not self._authorised():
+                self._reply(401, {"ok": False, "error": "not_paired"})
+                return
+            try:
+                data = self.state.app_release_path.read_bytes()
+            except OSError:
+                self._reply(404, {"ok": False, "error": "no_app_release"})
+                return
+            self._reply_bytes(200, "application/vnd.android.package-archive", data)
+            return
         self._reply(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:
@@ -395,8 +599,22 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self._pair(payload)
         elif self.path == "/v1/send":
             self._send_text(payload)
+        elif self.path == "/v1/preview":
+            self._preview(payload)
         else:
             self._reply(404, {"ok": False, "error": "not_found"})
+
+    def _preview(self, payload: dict) -> None:
+        """Live preview of speech in progress: dashboard only, never keyboard input."""
+        if not self._authorised():
+            self._reply(401, {"ok": False, "error": "not_paired"})
+            return
+        text = payload.get("text")
+        if not isinstance(text, str) or len(text) > MAX_TEXT:
+            self._reply(400, {"ok": False, "error": "invalid_text"})
+            return
+        self.state.set_preview(text.strip())
+        self._reply(200, {"ok": True})
 
     def _pair(self, payload: dict) -> None:
         code = payload.get("code")
@@ -414,7 +632,7 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self.state.bootstrap_code = None
             self.state.bootstrap_expires = 0.0
             self.state.session_token = token
-            save_session_token(token)
+            save_session_token(token, self.state.app_dir)
         self.state.status("Phone paired successfully")
         self._reply(200, {"ok": True, "session_token": token, "hostname": DEVICE_NAME})
 
@@ -466,26 +684,34 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 self._reply(500, {"ok": False, "error": "delivery_state_unavailable"})
                 return
-            expected_events = len(safe_text.encode("utf-16-le"))
-            try:
-                inserted = type_unicode_text(safe_text)
-            except (OSError, ctypes.ArgumentError):
+
+        # Typing runs outside the lock so a slow delay never freezes the GUI.
+        expected_events = len(safe_text.encode("utf-16-le"))
+        delay_ms = getattr(self.state.settings, "typing_delay_ms", 0) if self.state.settings else 0
+        try:
+            inserted = type_unicode_text(safe_text, delay_ms)
+        except (OSError, ctypes.ArgumentError):
+            with self.state.lock:
                 self.state.forget_delivery(message_id)
-                self._reply(500, {"ok": False, "error": "input_failed"})
-                return
+            self._reply(500, {"ok": False, "error": "input_failed"})
+            return
+
+        uncertain = False
+        with self.state.lock:
             if inserted != expected_events:
-                if inserted > 0:
+                uncertain = inserted > 0
+                if uncertain:
                     self.state.finish_delivery(message_id, "uncertain")
                 else:
                     self.state.forget_delivery(message_id)
-                self._reply(
-                    409,
-                    {"ok": False, "uncertain": inserted > 0, "error": "input_failed"},
-                )
-                self.state.status("Text input may have failed or may be incomplete")
-                return
-            self.state.finish_delivery(message_id, "done")
+            else:
+                self.state.finish_delivery(message_id, "done")
 
+        if uncertain:
+            self._reply(409, {"ok": False, "uncertain": True, "error": "input_failed"})
+            self.state.status("Text input may have failed or may be incomplete")
+            return
+        self.state.clear_preview()
         self.state.status("Text was typed on the PC")
         self._reply(200, {"ok": True, "duplicate": False})
 
@@ -499,228 +725,163 @@ class VoiceHTTPServer(http.server.ThreadingHTTPServer):
         super().__init__(address, handler)
 
 
-class PairWindow:
-    def __init__(self, root: tk.Tk, state: HelperState, fingerprint: str, on_close=None):
-        self.root = root
-        self.state = state
-        self.fingerprint = fingerprint
-        self.on_close = on_close
-        self.window = tk.Toplevel(root)
-        self.window.title("Voice to PC")
-        self.window.resizable(False, False)
-        self.window.configure(bg="#f3f6f4")
-        self.window.protocol("WM_DELETE_WINDOW", self.close)
+class VoiceHelperService:
+    """Owns the TLS server, pairing state, and certificate lifecycle for the GUI."""
 
-        ttk.Label(
-            self.window,
-            text=f"{APP_NAME}  ·  {DEVICE_NAME}",
-            justify="center",
-            font=("Segoe UI", 13, "bold"),
-        ).pack(padx=20, pady=(18, 4))
-        ttk.Label(
-            self.window,
-            text="Phone and PC must share the same Wi-Fi. Scan this QR code once; it is remembered across PC restarts.",
-            wraplength=340,
-            justify="center",
-        ).pack(padx=18, pady=(0, 10))
-        frame = tk.Frame(self.window, bg="#ffffff", highlightbackground="#dbe4df", highlightthickness=1)
-        frame.pack(padx=18, pady=(0, 8))
-        self.qr_label = ttk.Label(frame)
-        self.qr_label.pack(padx=10, pady=10)
-        self.status_label = ttk.Label(self.window, text="Scan within 3 minutes.", justify="center")
-        self.status_label.pack(padx=18, pady=(0, 6))
-        ttk.Button(self.window, text="New QR code", command=self.refresh).pack(padx=18, pady=(0, 8))
+    def __init__(
+        self,
+        settings: AppSettings,
+        app_dir_path: Path | None = None,
+        release_sources: tuple[Path, ...] | None = None,
+    ) -> None:
+        self.settings = settings
+        self.app_dir = app_dir_path or APP_DIR
+        # None keeps the defaults; an empty tuple disables build detection (used by tests).
+        self.release_sources = release_sources
+        self._release_stop = threading.Event()
+        self._release_thread: threading.Thread | None = None
+        self.state = HelperState(self.app_dir)
+        self.state.settings = settings
+        self.server: VoiceHTTPServer | None = None
+        self.server_thread: threading.Thread | None = None
+        self.on_event: Callable[[str], None] | None = None
+        self.notifier: Callable[[str], None] | None = None
 
-        bottom = ttk.Frame(self.window)
-        bottom.pack(fill="x", padx=18, pady=(0, 16))
-        self.autostart_button = ttk.Button(
-            bottom, text=self._autostart_label(), width=18, command=self.toggle_autostart
+    @property
+    def is_running(self) -> bool:
+        return self.server is not None
+
+    def fingerprint(self) -> str:
+        return self.state.fingerprint
+
+    def paired(self) -> bool:
+        return bool(self.state.session_token)
+
+    def start(self) -> None:
+        """Bind the TLS server on the configured port; raises OSError if taken."""
+        if self.server is not None:
+            return
+        key_path, cert_path, fingerprint = ensure_certificate(self.app_dir)
+        self.state.fingerprint = fingerprint
+        server = VoiceHTTPServer(("0.0.0.0", self.settings.port), VoiceRequestHandler, self.state)
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        server.socket = tls.wrap_socket(server.socket, server_side=True)
+        self.server = server
+        self.server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        self.server_thread.start()
+        self._start_release_watch()
+        self.state.status(f"Helper listening on {local_ipv4_address()}:{self.settings.port}")
+
+    def _start_release_watch(self) -> None:
+        if self.release_sources is not None and not self.release_sources:
+            return
+        self.publish_newest_build()
+        if self._release_thread is not None and self._release_thread.is_alive():
+            return
+        self._release_stop.clear()
+        self._release_thread = threading.Thread(target=self._watch_releases, daemon=True)
+        self._release_thread.start()
+
+    def _watch_releases(self) -> None:
+        while not self._release_stop.wait(RELEASE_WATCH_SECONDS):
+            try:
+                self.publish_newest_build()
+            except Exception:  # pragma: no cover - a bad build must not kill the watcher
+                continue
+
+    def publish_newest_build(self) -> bool:
+        """Serve the newest APK on disk, so a fresh Gradle build reaches the phone by itself."""
+        changed = self.state.sync_app_release(self.release_sources)
+        if not changed:
+            return False
+        self.state.status(
+            f"New Android build ready ({changed['size'] // 1024} KB) "
+            "— tap Check for app update on the phone"
         )
-        self.autostart_button.pack(side="left")
-        ttk.Button(bottom, text="Hide", width=10, command=self.close).pack(side="right")
-        self.refresh()
+        return True
 
-    @staticmethod
-    def _autostart_label() -> str:
-        return "Start with Windows: On" if autostart_enabled() else "Start with Windows: Off"
+    def stop(self) -> None:
+        self._release_stop.set()
+        watcher = self._release_thread
+        self._release_thread = None
+        if watcher is not None:
+            watcher.join(timeout=2.0)
+        server = self.server
+        self.server = None
+        thread = self.server_thread
+        self.server_thread = None
+        if server is None:
+            return
+        try:
+            server.shutdown()
+            server.server_close()
+        except OSError:
+            pass
+        if thread is not None:
+            thread.join(timeout=2.0)
+        self.state.status("Helper stopped")
 
-    def toggle_autostart(self):
-        set_autostart(not autostart_enabled())
-        self.autostart_button.configure(text=self._autostart_label())
-
-    def refresh(self):
+    def new_pairing(self) -> dict:
+        """Issue a fresh one-time pairing code and return the QR payload for it."""
         with self.state.lock:
             code = secrets.token_urlsafe(24)
             self.state.bootstrap_code = code
             self.state.bootstrap_expires = time.monotonic() + PAIR_TTL_SECONDS
-        address = local_ipv4_address()
-        payload = {
+        return {
             "app": "voice-to-pc",
-            "host": address,
-            "port": PORT,
+            "host": local_ipv4_address(),
+            "port": self.settings.port,
             "code": code,
-            "fingerprint": self.fingerprint,
+            "fingerprint": self.state.fingerprint,
         }
+
+    def qr_image(self, payload: dict, size: int = 280) -> Image.Image:
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=6, border=3)
         qr.add_data(json.dumps(payload, separators=(",", ":")))
         qr.make(fit=True)
         image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-        image = image.resize((260, 260), Image.Resampling.NEAREST)
-        self.photo = ImageTk.PhotoImage(image)
-        self.qr_label.configure(image=self.photo)
-        self.status_label.configure(text=f"{address}:{PORT}  ·  Scan within 3 minutes")
+        return image.resize((size, size), Image.Resampling.NEAREST)
 
-    def close(self):
+    def unpair(self) -> None:
         with self.state.lock:
-            self.state.bootstrap_code = None
-            self.state.bootstrap_expires = 0.0
-        self.window.destroy()
-        if self.on_close:
-            self.on_close()
+            self.state.session_token = None
+        delete_session_token(self.app_dir)
+        self.state.status("Phone unpaired")
 
-
-class DesktopApp:
-    def __init__(self):
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-        key_path, cert_path, fingerprint = ensure_certificate()
-        self.state = HelperState()
-        self.state.fingerprint = fingerprint
-        self.root = tk.Tk()
-        self.root.title(APP_NAME)
-        self.root.resizable(False, False)
-        self.root.configure(bg="#f3f6f4")
-        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
-        self.state.status_callback = self.show_status
-
-        self.server = VoiceHTTPServer(("0.0.0.0", PORT), VoiceRequestHandler, self.state)
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.minimum_version = ssl.TLSVersion.TLSv1_2
-        tls.load_cert_chain(certfile=cert_path, keyfile=key_path)
-        self.server.socket = tls.wrap_socket(self.server.socket, server_side=True)
-        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.server_thread.start()
-        self.pair_window: PairWindow | None = None
-        self.icon = self._create_tray_icon()
-        self.icon.run_detached()
-        self._build_dashboard()
-
-    def _build_dashboard(self):
-        pad = {"padx": 18, "pady": 8}
-        ttk.Label(
-            self.root,
-            text=f"{APP_NAME}  ·  {DEVICE_NAME}",
-            font=("Segoe UI", 14, "bold"),
-            background="#f3f6f4",
-        ).pack(fill="x", **pad)
-        ttk.Label(
-            self.root,
-            text=f"Listening on {local_ipv4_address()}:{PORT}  ·  same Wi-Fi only",
-            background="#f3f6f4",
-        ).pack(fill="x", **pad)
-
-        self.link_label = ttk.Label(self.root, text="", font=("Segoe UI", 11, "bold"))
-        self.link_label.pack(fill="x", **pad)
-
-        buttons = ttk.Frame(self.root)
-        buttons.pack(fill="x", padx=18, pady=(4, 12))
-        ttk.Button(buttons, text="Pair phone", command=self.open_pair_window).pack(side="left")
-        ttk.Button(buttons, text="Start with Windows", command=self.toggle_autostart).pack(side="left", padx=8)
-        ttk.Button(buttons, text="Hide to tray", command=self.hide_window).pack(side="right")
-
-        log_frame = ttk.LabelFrame(self.root, text="Recent activity")
-        log_frame.pack(fill="both", expand=True, padx=18, pady=(0, 16))
-        self.log = tk.Text(log_frame, height=8, width=46, wrap="word", state="disabled", font=("Consolas", 9))
-        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
-        self.log.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.log.pack(side="left", fill="both", expand=True)
-        self._render_log()
-
-    def _render_log(self):
-        self.log.configure(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.insert("end", "\n".join(self.state.events[-60:]) or "No activity yet.")
-        self.log.configure(state="disabled")
-
-    def toggle_autostart(self):
-        set_autostart(not autostart_enabled())
-        self._render_status()
-
-    def _create_tray_icon(self):
-        image = Image.new("RGBA", (64, 64), (33, 110, 80, 255))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((9, 9, 55, 55), fill=(245, 255, 250, 255))
-        draw.text((19, 18), "V", fill=(33, 110, 80, 255), stroke_width=1)
-        menu = pystray.Menu(
-            pystray.MenuItem("Show dashboard", self.show_window),
-            pystray.MenuItem("Pair phone…", self.open_pair_window),
-            pystray.MenuItem("Quit", self.quit),
-        )
-        return pystray.Icon("voice-to-pc", image, APP_NAME, menu)
-
-    def show_status(self, message: str):
-        def notify():
-            self._render_status()
-            if not self.icon:
-                return
+    def regenerate_certificate(self) -> str:
+        """Replace the certificate (invalidating any paired phone) and return its fingerprint."""
+        for name in ("server-key.pem", "server-cert.pem"):
             try:
-                self.icon.notify(message, APP_NAME)
-            except (NotImplementedError, RuntimeError):
+                (self.app_dir / name).unlink()
+            except FileNotFoundError:
                 pass
-        self.root.after(0, notify)
-
-    def _render_status(self):
+        self.unpair()
+        _, _, fingerprint = ensure_certificate(self.app_dir)
         with self.state.lock:
-            paired = bool(self.state.session_token)
-        state_text = "Phone paired" if paired else "Phone not paired"
-        startup = "on" if autostart_enabled() else "off"
-        self.link_label.configure(text=f"{state_text}  ·  Start with Windows: {startup}")
-        self._render_log()
+            self.state.fingerprint = fingerprint
+        self.state.status("Certificate replaced; pair the phone again")
+        return fingerprint
 
-    def show_window(self, icon=None, item=None):
-        def show():
-            self.root.deiconify()
-            self.root.lift()
-            self._render_status()
-        self.root.after(0, show)
+    def open_data_folder(self) -> None:
+        self.app_dir.mkdir(parents=True, exist_ok=True)
+        os.startfile(self.app_dir)  # noqa: S601 - fixed, locally generated path
 
-    def hide_window(self, icon=None, item=None):
-        def hide():
-            if self.pair_window and self.pair_window.window.winfo_exists():
-                self.pair_window.close()
-            self.root.withdraw()
-        self.root.after(0, hide)
-
-    def open_pair_window(self, icon=None, item=None):
-        def show():
-            if self.pair_window and self.pair_window.window.winfo_exists():
-                self.pair_window.window.deiconify()
-                self.pair_window.window.lift()
-            else:
-                self.pair_window = PairWindow(self.root, self.state, self.state.fingerprint)
-        self.root.after(0, show)
-
-    def quit(self, icon=None, item=None):
-        if self.icon:
-            self.icon.stop()
-        self.server.shutdown()
-        self.server.server_close()
-        self.root.after(0, self.root.quit)
-
-    def run(self):
-        self._render_status()
-        self.root.mainloop()
+    def notify(self, message: str) -> None:
+        if not self.settings.show_notifications:
+            return
+        notifier = self.notifier
+        if notifier:
+            notifier(message)
 
 
 def main() -> None:
     if os.name != "nt":
         raise SystemExit("This helper is designed for Windows 10/11.")
-    try:
-        app = DesktopApp()
-        app.run()
-    except OSError as exc:
-        messagebox.showerror(APP_NAME, f"Could not start the helper: {exc}")
-        raise
+    from gui.app import run_gui
+
+    run_gui()
 
 
 if __name__ == "__main__":

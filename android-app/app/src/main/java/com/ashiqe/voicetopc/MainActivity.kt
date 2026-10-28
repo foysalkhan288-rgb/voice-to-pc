@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -16,6 +14,7 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -26,6 +25,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import com.ashiqe.voicetopc.ui.ButtonStyle
+import com.ashiqe.voicetopc.ui.Design
+import com.ashiqe.voicetopc.ui.Metric
+import com.ashiqe.voicetopc.ui.Palette
 import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONObject
 import java.io.File
@@ -53,12 +56,13 @@ import javax.net.ssl.X509TrustManager
 
 private const val MIC_PERMISSION_REQUEST = 401
 private const val CAMERA_PERMISSION_REQUEST = 402
+private const val NOTIFICATION_PERMISSION_REQUEST = 403
 private const val FINALIZE_TIMEOUT_MS = 10_000L
 private const val UPDATE_APK_NAME = "voice-to-pc.apk"
-private const val PREFS_NAME = "voice_to_pc"
+internal const val PREFS_NAME = "voice_to_pc"
 private const val KEY_ALIAS = "voice_to_pc_connection_key"
 private const val KEY_ONLINE_MODE = "online_mode"
-private const val KEY_OUTPUT_MODE = "output_mode"
+internal const val KEY_OUTPUT_MODE = "output_mode"
 private const val KEY_LANGUAGE_MODE = "language_mode"
 
 data class PcConnection(
@@ -78,8 +82,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusView: TextView
     private lateinit var privacyView: TextView
     private lateinit var connectionView: TextView
-    private lateinit var outputButton: Button
-    private lateinit var languageButton: Button
+    private lateinit var outputValue: TextView
+    private lateinit var languageValue: TextView
     private lateinit var micButton: Button
     private lateinit var holdButton: Button
     private lateinit var pairButton: Button
@@ -131,6 +135,19 @@ class MainActivity : AppCompatActivity() {
             setStatus("Choose Online or Offline speech recognition to get started.")
         }
         checkLink()
+        requestNotificationPermission()
+        // Keep the shade control available: dictate from any app without returning here.
+        DictationNotifications.ensureReady(this)
+    }
+
+    /**
+     * The foreground dictation service cannot post its notification without this on Android 13+.
+     * Denial is harmless: dictation still works, only the ongoing notification is hidden.
+     */
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
     }
 
     override fun onResume() {
@@ -213,12 +230,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            setBackgroundColor(Palette.BACKGROUND)
+        }
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(24))
-            setBackgroundColor(Color.rgb(244, 247, 245))
+            setBackgroundColor(Palette.BACKGROUND)
+            setPadding(dp(Metric.GUTTER), space(3), dp(Metric.GUTTER), space(6))
         }
-        val scroll = ScrollView(this).apply { isFillViewport = true }
         scroll.addView(outer)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             scroll.setOnApplyWindowInsetsListener { view, insets ->
@@ -228,192 +249,196 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        outer.addView(TextView(this).apply {
-            text = "VOICE TO PC"
-            textSize = 12f
-            letterSpacing = 0.12f
-            setTextColor(Color.rgb(35, 112, 82))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, matchWrap())
-        outer.addView(TextView(this).apply {
-            text = "Speak. See it typed."
-            textSize = 30f
-            setTextColor(Color.rgb(24, 45, 36))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(5), 0, dp(3))
-        }, matchWrap())
-        outer.addView(bodyText("Dictate on your phone and send the transcript to the active text field on your PC."), matchWrap())
-        addGap(outer, 18)
+        // ---- brand header -----------------------------------------------------------------
+        outer.addView(Design.overline(this, "VOICE TO PC", Palette.ACCENT), matchWrap())
+        outer.addView(Design.title(this, "Speak. See it typed."), matchWrap().apply { topMargin = space(1) })
+        outer.addView(
+            Design.body(this, "Dictate on your phone and send the transcript to the active text field on your PC."),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        addGap(outer, 24)
 
-        val connectionCard = card()
-        connectionCard.addView(sectionTitle("PC connection"), matchWrap())
-        statusDot = TextView(this).apply {
-            textSize = 28f
-            gravity = Gravity.START
-        }
-        addGap(connectionCard, 4)
-        connectionCard.addView(statusDot, matchWrap())
-        connectionView = TextView(this).apply {
-            textSize = 16f
-            setTextColor(Color.rgb(24, 45, 36))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        addGap(connectionCard, 6)
-        connectionCard.addView(connectionView, matchWrap())
-        pairButton = button("Pair with PC", primary = true) { startQrScan() }
-        addGap(connectionCard, 12)
-        connectionCard.addView(pairButton, buttonParams())
-        reconnectButton = button("Reconnect") { checkLink() }
-        addGap(connectionCard, 8)
-        connectionCard.addView(reconnectButton, buttonParams())
-        updateButton = button("Check for app update") { onUpdateButton() }
-        addGap(connectionCard, 8)
-        connectionCard.addView(updateButton, buttonParams())
-        updateView = bodyText("")
-        updateView.textSize = 13f
-        updateView.visibility = View.GONE
-        addGap(connectionCard, 6)
-        connectionCard.addView(updateView, matchWrap())
-        addCard(outer, connectionCard)
-
-        val recognitionCard = card()
-        recognitionCard.addView(sectionTitle("Speech recognition"), matchWrap())
-        privacyView = bodyText("")
-        addGap(recognitionCard, 4)
-        recognitionCard.addView(privacyView, matchWrap())
-        onlineButton = button("Online recognition") {
-            choosePrivacy(online = true)
-        }
-        addGap(recognitionCard, 10)
-        recognitionCard.addView(onlineButton, buttonParams())
-        offlineButton = button("Offline only") {
-            choosePrivacy(online = false)
-        }
-        addGap(recognitionCard, 8)
-        recognitionCard.addView(offlineButton, buttonParams())
-        addCard(outer, recognitionCard)
-
-        val optionsCard = card()
-        optionsCard.addView(sectionTitle("Output and language"), matchWrap())
-        outputButton = button("") { toggleOutputMode() }
-        addGap(optionsCard, 10)
-        optionsCard.addView(outputButton, buttonParams())
-        languageButton = button("") { cycleLanguageMode() }
-        addGap(optionsCard, 8)
-        optionsCard.addView(languageButton, buttonParams())
-        addCard(outer, optionsCard)
-
+        // ---- dictation: the primary action, so it sits first and reads as the hero ---------
         val dictationCard = card()
-        dictationCard.addView(sectionTitle("Dictation"), matchWrap())
-        micButton = button("Start speaking", primary = true) { beginDictation() }
-        micButton.textSize = 18f
-        micButton.minHeight = dp(64)
-        addGap(dictationCard, 12)
-        dictationCard.addView(micButton, buttonParams())
-        holdButton = button("Hold to talk") { }
-        holdButton.textSize = 18f
-        holdButton.minHeight = dp(64)
-        holdButton.setOnTouchListener { _, event ->
+        dictationCard.addView(Design.overline(this, "DICTATION"), matchWrap())
+        dictationCard.addView(Design.headline(this, "Capture speech"), matchWrap().apply { topMargin = space(1) })
+        micButton = button("Start speaking", primary = true, hero = true) { beginDictation() }
+        dictationCard.addView(micButton, buttonParams().apply { topMargin = space(2) })
+        holdButton = button("Hold to talk", style = ButtonStyle.SECONDARY, hero = true) { }
+        holdButton.setOnTouchListener { view, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    view.isPressed = true
                     holdActive = true
                     beginDictation()
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.isPressed = false
                     finalizeListening()
                     true
                 }
                 else -> false
             }
         }
-        addGap(dictationCard, 8)
-        dictationCard.addView(holdButton, buttonParams())
-        statusView = TextView(this).apply {
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(74, 94, 83))
-            setPadding(dp(6), dp(14), dp(6), dp(8))
+        dictationCard.addView(holdButton, buttonParams().apply { topMargin = space(1) })
+        val statusPanel = Design.panel(this)
+        statusPanel.addView(Design.overline(this, "STATUS"), matchWrap())
+        statusView = Design.value(this, "Ready when you are.").apply {
+            setTextColor(Palette.MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            gravity = Gravity.START
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setPadding(0, space(1), 0, 0)
         }
-        dictationCard.addView(statusView, matchWrap())
+        statusPanel.addView(statusView, matchWrap())
+        dictationCard.addView(statusPanel, matchWrap().apply { topMargin = space(2) })
         retryButton = button("Retry sending") { retryPending() }
-        discardButton = button("Discard transcript") { discardPending() }
-        addGap(dictationCard, 6)
-        dictationCard.addView(retryButton, buttonParams())
-        addGap(dictationCard, 8)
-        dictationCard.addView(discardButton, buttonParams())
+        dictationCard.addView(retryButton, buttonParams().apply { topMargin = space(2) })
+        discardButton = button("Discard transcript", style = ButtonStyle.QUIET) { discardPending() }
+        dictationCard.addView(discardButton, buttonParams().apply { topMargin = space(1) })
         addCard(outer, dictationCard)
 
-        outer.addView(TextView(this).apply {
-            text = "Before speaking, click the target text field on your PC. Each tap records one utterance and sends the final transcript automatically."
-            textSize = 13f
-            setTextColor(Color.rgb(86, 103, 94))
+        // ---- notification shade: talk without leaving the app you are in -------------------
+        val shadeCard = card()
+        shadeCard.addView(Design.overline(this, "ANY APP"), matchWrap())
+        shadeCard.addView(Design.headline(this, "Talk from the notification shade"), matchWrap().apply { topMargin = space(1) })
+        shadeCard.addView(
+            Design.body(
+                this,
+                "Keep a Talk button in the shade. Swipe down, tap Talk, speak, and the text lands on your PC without closing the app you are in.",
+            ),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        val shadeShow = button("Show Talk in the notification shade", primary = true) {
+            DictationNotifications.ensureReady(this)
+            setStatus("Voice to PC is pinned to the notification shade. Swipe down to reach it from any app.")
+        }
+        shadeCard.addView(shadeShow, buttonParams().apply { topMargin = space(2) })
+        val shadeHide = button("Remove from the notification shade", style = ButtonStyle.QUIET) {
+            DictationNotifications.dismiss(this)
+            setStatus("Shade controls hidden. Reopen the app or tap Show to bring them back.")
+        }
+        shadeCard.addView(shadeHide, buttonParams().apply { topMargin = space(1) })
+        addCard(outer, shadeCard)
+
+        // ---- connection -------------------------------------------------------------------
+        val connectionCard = card()
+        connectionCard.addView(Design.overline(this, "CONNECTION"), matchWrap())
+        connectionCard.addView(Design.headline(this, "Your PC"), matchWrap().apply { topMargin = space(1) })
+        val statusPill = Design.pill(this)
+        statusDot = TextView(this).apply {
+            text = "\u25CF"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            includeFontPadding = false
             gravity = Gravity.CENTER
-            setPadding(dp(8), dp(2), dp(8), 0)
-        }, matchWrap())
+            setPadding(0, 0, space(1), 0)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        connectionView = Design.value(this, "")
+        statusPill.addView(
+            statusDot,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        statusPill.addView(
+            connectionView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        connectionCard.addView(statusPill, matchWrap().apply { topMargin = space(2) })
+        pairButton = button("Pair with PC", primary = true) { startQrScan() }
+        connectionCard.addView(pairButton, buttonParams().apply { topMargin = space(2) })
+        reconnectButton = button("Reconnect", style = ButtonStyle.QUIET) { checkLink() }
+        connectionCard.addView(reconnectButton, buttonParams().apply { topMargin = space(1) })
+        connectionCard.addView(Design.divider(this), matchWrap().apply { topMargin = space(2) })
+        updateButton = button("Check for app update", style = ButtonStyle.QUIET) { onUpdateButton() }
+        connectionCard.addView(updateButton, buttonParams().apply { topMargin = space(2) })
+        updateView = Design.caption(this, "")
+        updateView.visibility = View.GONE
+        connectionCard.addView(updateView, matchWrap().apply { topMargin = space(1) })
+        addCard(outer, connectionCard)
+
+        // ---- recognition ------------------------------------------------------------------
+        val recognitionCard = card()
+        recognitionCard.addView(Design.overline(this, "SPEECH"), matchWrap())
+        recognitionCard.addView(Design.headline(this, "Recognition source"), matchWrap().apply { topMargin = space(1) })
+        privacyView = bodyText("")
+        recognitionCard.addView(privacyView, matchWrap().apply { topMargin = space(1) })
+        val privacyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        onlineButton = button("Online", primary = false) { choosePrivacy(online = true) }
+        offlineButton = button("Offline only", primary = false) { choosePrivacy(online = false) }
+        privacyRow.addView(
+            onlineButton,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        privacyRow.addView(
+            offlineButton,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = space(1)
+            },
+        )
+        recognitionCard.addView(privacyRow, matchWrap().apply { topMargin = space(2) })
+        addCard(outer, recognitionCard)
+
+        // ---- output -----------------------------------------------------------------------
+        val optionsCard = card()
+        optionsCard.addView(Design.overline(this, "OUTPUT"), matchWrap())
+        optionsCard.addView(Design.headline(this, "Text and language"), matchWrap().apply { topMargin = space(1) })
+        val outputRow = Design.settingRow(this, "TEXT FORMAT", "Bengali script") { outputValue = it }
+        outputRow.setOnClickListener { toggleOutputMode() }
+        optionsCard.addView(outputRow, matchWrap().apply { topMargin = space(1) })
+        optionsCard.addView(Design.divider(this), matchWrap())
+        val languageRow = Design.settingRow(this, "SPEECH LANGUAGE", "Bangla") { languageValue = it }
+        languageRow.setOnClickListener { cycleLanguageMode() }
+        optionsCard.addView(languageRow, matchWrap())
+        addCard(outer, optionsCard)
+
+        outer.addView(
+            Design.caption(
+                this,
+                "Click the target text field on your PC before speaking. Each utterance is sent once, when you finish talking.",
+            ).apply { gravity = Gravity.CENTER },
+            matchWrap().apply { topMargin = space(1) },
+        )
         setContentView(scroll)
     }
 
-    private fun button(label: String, primary: Boolean = false, action: () -> Unit): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-        textSize = 15f
-        minHeight = dp(52)
-        setPadding(dp(16), dp(10), dp(16), dp(10))
-        background = rounded(if (primary) Color.rgb(31, 112, 79) else Color.rgb(232, 242, 236), 16)
-        setTextColor(if (primary) Color.WHITE else Color.rgb(31, 93, 68))
-        setOnClickListener { action() }
-    }
+    private fun button(
+        label: String,
+        primary: Boolean = false,
+        style: ButtonStyle = if (primary) ButtonStyle.PRIMARY else ButtonStyle.SECONDARY,
+        hero: Boolean = false,
+        action: () -> Unit,
+    ): Button = Design.button(this, label, style, hero, action)
 
-    private fun card() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = rounded(Color.WHITE, 20, Color.rgb(228, 235, 230))
-    }
+    /** One standard surface card from the shared design system. */
+    private fun card(): LinearLayout = Design.card(this)
 
     private fun addCard(parent: LinearLayout, child: LinearLayout) {
         parent.addView(child, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(14) })
+        ).apply { bottomMargin = dp(Metric.CARD_GAP) })
     }
 
     private fun addGap(parent: LinearLayout, height: Int) {
         parent.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
     }
 
-    private fun sectionTitle(label: String) = TextView(this).apply {
-        text = label
-        textSize = 17f
-        setTextColor(Color.rgb(24, 45, 36))
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-    }
-
-    private fun bodyText(label: String) = TextView(this).apply {
-        text = label
-        textSize = 14f
-        setTextColor(Color.rgb(86, 103, 94))
-        setLineSpacing(dp(2).toFloat(), 1f)
-    }
+    private fun bodyText(label: String): TextView = Design.body(this, label)
 
     private fun buttonParams() = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT,
     )
 
-    private fun rounded(color: Int, radius: Int, stroke: Int? = null) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(radius).toFloat()
-        if (stroke != null) setStroke(dp(1), stroke)
-    }
-
     private fun applyChoiceStyle(button: Button, selected: Boolean) {
-        button.background = rounded(
-            if (selected) Color.rgb(223, 240, 229) else Color.rgb(246, 248, 246),
-            16,
-            if (selected) Color.rgb(65, 142, 103) else Color.rgb(226, 233, 228),
-        )
-        button.setTextColor(if (selected) Color.rgb(30, 102, 68) else Color.rgb(64, 78, 70))
+        button.background = Design.choiceBackground(this, selected)
+        button.setTextColor(Design.choiceTextColors(selected))
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
@@ -423,13 +448,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    /** One 8dp spacing step, so vertical rhythm stays on the design scale. */
+    /** One 8dp spacing step, so vertical rhythm stays on the design scale. */
+    private fun space(steps: Int): Int = dp(steps * Metric.SPACING_UNIT)
+
     private fun refreshUi() {
         val connection = SecureConnectionStore(this).load()
         val dotColor = when {
-            connection == null -> Color.rgb(160, 160, 160)
-            linkState == "connected" -> Color.rgb(31, 140, 80)
-            linkState == "unreachable" -> Color.rgb(190, 60, 45)
-            else -> Color.rgb(200, 150, 40)
+            connection == null -> Palette.DISABLED_TEXT
+            linkState == "connected" -> Palette.SUCCESS
+            linkState == "unreachable" -> Palette.DANGER
+            else -> Palette.WARNING
         }
         if (::statusDot.isInitialized) statusDot.setTextColor(dotColor)
         if (::statusDot.isInitialized) statusDot.text = "●"
@@ -446,16 +475,16 @@ class MainActivity : AppCompatActivity() {
         }
         applyChoiceStyle(onlineButton, privacyOnline == true)
         applyChoiceStyle(offlineButton, privacyOnline == false)
-        outputButton.text = when (outputMode) {
-            "roman" -> "Output: Banglish  ·  Tap to switch"
-            "english" -> "Output: English  ·  Tap to switch"
-            else -> "Output: Bengali script  ·  Tap to switch"
+        outputValue.text = when (outputMode) {
+            "roman" -> "Banglish"
+            "english" -> "English"
+            else -> "Bengali script"
         }
-        languageButton.text = when {
-            Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Speech language: Auto (Bangla + English)"
-            outputMode == "english" -> "Speech language: English (output lock)"
-            languageMode == "en" -> "Speech language: English"
-            else -> "Speech language: Bangla"
+        languageValue.text = when {
+            Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Auto (Bangla + English)"
+            outputMode == "english" -> "English (output lock)"
+            languageMode == "en" -> "English"
+            else -> "Bangla"
         }
         val hasPending = pendingText != null
         retryButton.visibility = if (hasPending) View.VISIBLE else View.GONE
@@ -974,6 +1003,8 @@ class MainActivity : AppCompatActivity() {
                 if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginDictation()
                 else setStatus("Microphone permission is required for voice recognition.")
             }
+            // Denial is fine: dictation still works, the foreground service just stays silent.
+            NOTIFICATION_PERMISSION_REQUEST -> Unit
         }
     }
 
@@ -985,7 +1016,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-private class SecureConnectionStore(private val context: Context) {
+internal class SecureConnectionStore(private val context: Context) {
     private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(connection: PcConnection) {
@@ -1047,7 +1078,7 @@ private class SecureConnectionStore(private val context: Context) {
     }
 }
 
-private fun postJson(
+internal fun postJson(
     host: String,
     port: Int,
     fingerprint: String,
@@ -1070,7 +1101,7 @@ private fun postJson(
     return openJson(trustManager, host, port, path, body.toString(), sessionToken, "GET")
 }
 
-private fun getJson(
+internal fun getJson(
     host: String,
     port: Int,
     fingerprint: String,
@@ -1184,7 +1215,7 @@ private fun openJson(
     }
 }
 
-private object EnglishNormalizer {
+internal object EnglishNormalizer {
     // ponytail: puny local cleanup only; upgrade to on-device translation model when user asks for real bn→en translation.
     fun normalize(text: String): String {
         var out = text.replace(Regex("[\\u0980-\\u09FF]+")) { m -> BengaliRomanizer.transliterate(m.value) }
@@ -1194,7 +1225,7 @@ private object EnglishNormalizer {
     }
 }
 
-private object BengaliRomanizer {
+internal object BengaliRomanizer {
     private val consonants = mapOf(
         'ক' to "k", 'খ' to "kh", 'গ' to "g", 'ঘ' to "gh", 'ঙ' to "ng",
         'চ' to "ch", 'ছ' to "chh", 'জ' to "j", 'ঝ' to "jh", 'ঞ' to "ny",
