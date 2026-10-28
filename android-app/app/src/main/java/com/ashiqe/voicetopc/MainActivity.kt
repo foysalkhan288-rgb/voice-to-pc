@@ -1186,7 +1186,7 @@ private fun openJson(
         sslSocketFactory = context.socketFactory
         hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
         connectTimeout = if (method == "GET") 2_500 else 5_000
-        readTimeout = if (method == "GET") 4_000 else 8_000
+        readTimeout = if (method == "GET") 4_000 else 30_000
         requestMethod = method
         if (requestText != null) {
             doOutput = true
