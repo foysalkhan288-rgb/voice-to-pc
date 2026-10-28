@@ -854,6 +854,8 @@ class VoiceHelperService:
     def unpair(self) -> None:
         with self.state.lock:
             self.state.session_token = None
+            self.state.delivered_ids = {}
+            self.state._save_delivery_states()
         delete_session_token(self.app_dir)
         self.state.status("Phone unpaired")
 
