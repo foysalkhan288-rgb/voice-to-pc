@@ -11,6 +11,8 @@ The workspace contains two parts:
 
 Use Python 3.11 or newer on Windows 10/11. On first use, double-click `windows-helper/setup.bat`; it creates a private Python environment, installs the helper's dependencies, then starts it. This step needs an internet connection to download those packages. Later, double-click `windows-helper/run.bat` to start it again — it runs without a console window and opens the helper's dashboard with a system tray icon beside it.
 
+A standalone `windows-helper/dist/VoiceToPC.exe` can be built with `windows-helper/build-exe.bat` (requires the venv from `setup.bat`); it needs no Python install and registers itself to start with Windows on first launch.
+
 The dashboard has four screens on the left: **Dashboard**, **Pair phone**, **Settings**, and **Security**. The dashboard shows whether the helper is listening, whether a phone is paired, this PC's name and local address, how many transcripts have been typed, and a live activity feed. Closing the window keeps the helper running in the tray; **Quit** in the tray menu actually exits it. A colored dot next to the version number shows the state: green means running, amber means running but no phone paired yet, red means stopped.
 
 Before the first dictation, click the target text field where the transcript should appear. The helper sends Unicode keyboard input to the foreground window; it does not take focus or alter the clipboard. It will refuse to send while Windows is on a secure desktop such as sign-in or a UAC prompt. Elevated apps may also block input from a non-elevated helper.
