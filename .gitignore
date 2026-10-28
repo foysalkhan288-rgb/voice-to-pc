@@ -13,3 +13,9 @@ android-app/**/build/
 
 # Stray build artifacts
 *.apk
+
+# PyInstaller build artifacts
+windows-helper/build/
+windows-helper/dist/
+windows-helper/*.spec
+

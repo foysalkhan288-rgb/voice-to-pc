@@ -44,7 +44,7 @@ class AppSettings:
     typing_delay_ms: int = 0
     show_notifications: bool = True
     start_minimized: bool = False
-    start_with_windows: bool = False
+    start_with_windows: bool = True
     theme: str = "dark"
 
     @classmethod

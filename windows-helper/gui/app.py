@@ -22,6 +22,7 @@ from voice_to_text_helper import (
     DEVICE_NAME,
     VoiceHelperService,
     local_ipv4_address,
+    set_autostart,
 )
 
 VERSION = "1.1.0"
@@ -82,6 +83,10 @@ class VoiceToPcApp:
                 f"The helper could not listen on port {self.settings.port}: {exc}\n\n"
                 "Another program may be using it. Change the port in Settings, then start the helper.",
             )
+        try:
+            set_autostart(self.settings.start_with_windows)
+        except Exception:
+            pass
         self.refresh_status()
 
         if self.settings.start_minimized:

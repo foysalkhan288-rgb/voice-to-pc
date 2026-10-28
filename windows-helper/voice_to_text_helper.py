@@ -358,7 +358,10 @@ def autostart_enabled() -> bool:
 def set_autostart(enabled: bool) -> None:
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
-            command = f'"{sys.executable}" "{__file__}"'
+            if getattr(sys, "frozen", False):
+                command = f'"{sys.executable}"'
+            else:
+                command = f'"{sys.executable}" "{__file__}"'
             winreg.SetValueEx(key, STARTUP_ENTRY, 0, winreg.REG_SZ, command)
         else:
             try:
