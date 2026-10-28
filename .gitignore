@@ -10,3 +10,6 @@ android-app/**/build/
 
 # Export package prepared for GitHub Actions upload
 /Voice-to-PC-GitHub-build.zip
+
+# Stray build artifacts
+*.apk
