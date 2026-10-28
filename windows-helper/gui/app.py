@@ -24,7 +24,7 @@ from voice_to_text_helper import (
     local_ipv4_address,
 )
 
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 
 NAV_ITEMS: tuple[tuple[str, str, type[BasePage]], ...] = (
     ("dashboard", "Dashboard", DashboardPage),

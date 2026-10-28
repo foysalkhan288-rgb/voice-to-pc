@@ -52,3 +52,25 @@ jobs:
             android-app/app/build/outputs/apk/debug/app-debug.apk
             android-app/app/build/outputs/apk/debug/emulator-smoke-test.log
           if-no-files-found: warn
+
+  helper-tests:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install helper dependencies
+        working-directory: windows-helper
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run helper tests
+        working-directory: windows-helper
+        run: python -m pytest tests/ -q
