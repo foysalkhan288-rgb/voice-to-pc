@@ -19,3 +19,6 @@ windows-helper/build/
 windows-helper/dist/
 windows-helper/*.spec
 
+
+# Kotlin/Gradle caches
+android-app/.kotlin/
