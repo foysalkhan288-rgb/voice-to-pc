@@ -107,6 +107,7 @@ class MainActivity : AppCompatActivity() {
     private var languageMode: String = "auto"
     private var linkState: String = "unknown" // connected | unreachable | unpaired | unknown
     private var availableUpdate: UpdateInfo? = null
+    private var githubUpdateUrl: String? = null
     private var updateBusy = false
     private var holdActive = false
     // Partial transcripts are previewed on the PC; they are never typed into the focused field.
@@ -861,12 +862,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun onUpdateButton() {
         val connection = SecureConnectionStore(this).load()
-        if (connection == null) {
-            setStatus("Pair with your PC first, then check for updates.")
+        if (availableUpdate != null) {
+            if (connection != null) installAvailableUpdate(connection) else installGitHubUpdate()
             return
         }
-        if (availableUpdate != null) {
-            installAvailableUpdate(connection)
+        if (connection == null) {
+            checkGitHubUpdate()
             return
         }
         updateBusy = true
@@ -955,6 +956,90 @@ class MainActivity : AppCompatActivity() {
                 val expected = availableUpdate?.sha256
                 if (expected != null && digest != expected) {
                     throw IllegalStateException("The downloaded file did not match the PC copy.")
+                }
+                val folder = File(cacheDir, "updates").apply { mkdirs() }
+                val target = File(folder, UPDATE_APK_NAME)
+                target.outputStream().use { it.write(bytes) }
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    launchInstaller(target)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    setStatus("Update download failed: ${error.message ?: "connection error"}")
+                }
+            }
+        }
+    }
+
+    private fun checkGitHubUpdate() {
+        updateBusy = true
+        refreshUi()
+        setStatus("Checking GitHub for a newer build…")
+        worker.execute {
+            try {
+                val url = URL("https://api.github.com/repos/foysalkhan288-rgb/voice-to-pc/releases/latest")
+                val connection = (url.openConnection() as HttpsURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10_000
+                    readTimeout = 15_000
+                    setRequestProperty("Accept", "application/vnd.github+json")
+                    setRequestProperty("User-Agent", "VoiceToPC")
+                }
+                val responseText = connection.inputStream.use { it.bufferedReader().readText() }
+                connection.disconnect()
+                val release = JSONObject(responseText)
+                val assets = release.getJSONArray("assets")
+                var assetUrl: String? = null
+                var assetSha: String? = null
+                var assetSize: Long = 0
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val name = asset.optString("name")
+                    if (name.endsWith(".apk")) {
+                        assetUrl = asset.optString("browser_download_url")
+                        assetSha = asset.optString("digest").removePrefix("sha256:")
+                        assetSize = asset.optLong("size")
+                        break
+                    }
+                }
+                val installed = installedApkSha256()
+                val found = if (assetUrl != null && assetSha != null && assetSha != installed) {
+                    UpdateInfo(assetSha, assetSize)
+                } else null
+                runOnUiThread {
+                    updateBusy = false
+                    availableUpdate = found
+                    githubUpdateUrl = assetUrl
+                    refreshUi()
+                    setStatus(if (found != null) "A newer build is on GitHub. Tap Install update." else "Already up to date.")
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    updateBusy = false
+                    refreshUi()
+                    setStatus("Could not check GitHub: ${error.message ?: "connection error"}")
+                }
+            }
+        }
+    }
+
+    private fun installGitHubUpdate() {
+        val url = githubUpdateUrl ?: return
+        val expected = availableUpdate?.sha256
+        updateBusy = true
+        refreshUi()
+        setStatus("Downloading the update from GitHub…")
+        worker.execute {
+            try {
+                val bytes = URL(url).openStream().use { it.readBytes() }
+                val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                if (expected != null && digest != expected) {
+                    throw IllegalStateException("The downloaded file did not match.")
                 }
                 val folder = File(cacheDir, "updates").apply { mkdirs() }
                 val target = File(folder, UPDATE_APK_NAME)

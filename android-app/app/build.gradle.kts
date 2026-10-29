@@ -3,6 +3,9 @@ plugins {
 }
 
 android {
+    buildFeatures {
+        buildConfig = true
+    }
     namespace = "com.ashiqe.voicetopc"
     compileSdk = 36
 

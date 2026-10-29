@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -53,6 +53,18 @@ jobs:
             android-app/app/build/outputs/apk/debug/emulator-smoke-test.log
           if-no-files-found: warn
 
+      - name: Publish APK as a GitHub release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Android build
+          files: android-app/app/build/outputs/apk/debug/app-debug.apk
+          prerelease: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   helper-tests:
     runs-on: windows-latest
     steps:
@@ -74,3 +86,4 @@ jobs:
       - name: Run helper tests
         working-directory: windows-helper
         run: python -m pytest tests/ -q
+PY
