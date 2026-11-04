@@ -1031,7 +1031,8 @@ class MainActivity : AppCompatActivity() {
         if (!silent) setStatus("Checking GitHub for a newer build…")
         worker.execute {
             try {
-                val url = URL("https://api.github.com/repos/foysalkhan288-rgb/SpeakType/releases/latest")
+                // `latest` is a prerelease tag, so /releases/latest (stable-only) would miss it.
+                val url = URL("https://api.github.com/repos/foysalkhan288-rgb/voice-to-pc/releases/tags/latest")
                 val connection = (url.openConnection() as HttpsURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 10_000
