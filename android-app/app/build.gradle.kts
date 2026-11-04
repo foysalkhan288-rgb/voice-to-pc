@@ -60,7 +60,7 @@ android {
 }
 
 dependencies {
-    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
 
