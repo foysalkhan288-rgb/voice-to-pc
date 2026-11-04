@@ -39,7 +39,8 @@ jobs:
       - name: Build release APK
         working-directory: android-app
         env:
-          KEYSTORE_FILE: ../app/keystore/release.jks
+          # Only sign with a real key when Secrets exist; otherwise fall back to debug key.
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_BASE64 != '' && 'app/keystore/release.jks' || '' }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}

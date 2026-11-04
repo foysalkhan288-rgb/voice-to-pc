@@ -30,8 +30,9 @@ android {
         // stays green until a real release keystore is provisioned as GitHub Secrets.
         create("release") {
             val storeFilePath = System.getenv("KEYSTORE_FILE")
-            if (!storeFilePath.isNullOrBlank()) {
-                storeFile = file(storeFilePath)
+            val candidate = if (!storeFilePath.isNullOrBlank()) file(storeFilePath) else null
+            if (candidate != null && candidate.exists()) {
+                storeFile = candidate
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("KEY_ALIAS")
                 keyPassword = System.getenv("KEY_PASSWORD")
