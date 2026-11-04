@@ -1,6 +1,6 @@
-# Python helper
-windows-helper/.venv/
-windows-helper/__pycache__/
+# Python desktop app
+windows/.venv/
+windows/__pycache__/
 *.py[cod]
 
 # Android Studio / Gradle
@@ -15,9 +15,9 @@ android-app/**/build/
 *.apk
 
 # PyInstaller build artifacts
-windows-helper/build/
-windows-helper/dist/
-windows-helper/*.spec
+windows/build/
+windows/dist/
+windows/*.spec
 
 
 # Kotlin/Gradle caches

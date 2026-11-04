@@ -1,4 +1,4 @@
-"""Colors, fonts, and geometry tokens for the helper GUI."""
+"""Colors, fonts, and geometry tokens for the desktop GUI."""
 from __future__ import annotations
 
 import customtkinter as ctk

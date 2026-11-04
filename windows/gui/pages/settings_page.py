@@ -7,7 +7,7 @@ import customtkinter as ctk
 from gui.pages.base import BasePage
 from gui.theme import CARD_CORNER_RADIUS, active_palette, apply_theme, get_fonts
 from settings import MAX_TYPING_DELAY_MS, MIN_PORT, MAX_PORT, THEMES, AppSettings
-from voice_to_text_helper import autostart_enabled, set_autostart
+from speaktype import autostart_enabled, set_autostart
 
 
 class SettingsPage(BasePage):
@@ -41,6 +41,7 @@ class SettingsPage(BasePage):
         self._row(card, "Typing delay", self._build_delay_row)
         self._row(card, "Notifications", self._build_notify_row, stretch=False)
         self._row(card, "Startup", self._build_startup_row, stretch=False)
+        self._row(card, "Firewall", self._build_firewall_row, stretch=False)
         self._row(card, "Theme", self._build_theme_row, stretch=False)
 
         buttons = ctk.CTkFrame(card, fg_color="transparent")
@@ -54,7 +55,7 @@ class SettingsPage(BasePage):
 
         ctk.CTkLabel(
             card,
-            text="Changing the port restarts the helper. Pairing is unaffected — the QR code carries the new port, "
+            text="Changing the port restarts SpeakType. Pairing is unaffected — the QR code carries the new port, "
             "but re-scan if the phone is already paired with the old one.",
             font=self.fonts["small"], text_color=colors["text_muted"], wraplength=600, justify="left", anchor="w",
         ).pack(fill="x", padx=16, pady=(0, 16))
@@ -100,6 +101,18 @@ class SettingsPage(BasePage):
         ctk.CTkSwitch(holder, text="Start with Windows", variable=self.autostart_var).pack(side="left", padx=(16, 0))
         return holder
 
+    def _build_firewall_row(self, master) -> ctk.CTkBaseClass:
+        colors = active_palette()
+        holder = ctk.CTkFrame(master, fg_color="transparent")
+        self.firewall_status = ctk.CTkLabel(
+            holder, text="", font=self.fonts["body"], text_color=colors["text_muted"], anchor="w", width=120,
+        )
+        self.firewall_status.pack(side="left")
+        ctk.CTkButton(
+            holder, text="Allow phone connections", width=190, command=self.app.fix_firewall,
+        ).pack(side="left", padx=(8, 0))
+        return holder
+
     def _build_theme_row(self, master) -> ctk.CTkBaseClass:
         return ctk.CTkOptionMenu(master, variable=self.theme_var, values=list(THEMES), width=140)
 
@@ -121,6 +134,21 @@ class SettingsPage(BasePage):
         self.autostart_var.set(autostart_enabled())
         self.theme_var.set(settings.theme)
         self.port_error.configure(text="")
+        self._render_firewall()
+
+    def tick(self) -> None:
+        self._render_firewall()
+
+    def _render_firewall(self) -> None:
+        colors = active_palette()
+        label = getattr(self, "firewall_status", None)
+        if label is None:
+            return
+        allowed = getattr(self.app, "firewall_ok", True)
+        label.configure(
+            text="Allowed" if allowed else "Blocked",
+            text_color=colors["success"] if allowed else colors["danger"],
+        )
 
     def restore_defaults(self) -> None:
         defaults = AppSettings()
@@ -165,7 +193,7 @@ class SettingsPage(BasePage):
         set_autostart(settings.start_with_windows)
         apply_theme(settings.theme)
         if settings.theme != previous_theme:
-            self.app.toast("Theme saved — it repaints fully the next time the helper starts")
+            self.app.toast("Theme saved — it repaints fully the next time SpeakType starts")
         else:
             self.app.toast("Settings saved")
 
@@ -174,8 +202,8 @@ class SettingsPage(BasePage):
 
         if port != previous_port:
             if not messagebox.askyesno(
-                "Voice to PC", "The port changed. Restart the helper now to listen on the new port?"
+                "SpeakType", "The port changed. Restart SpeakType now to listen on the new port?"
             ):
                 return
             self.app.restart_server()
-            self.app.toast("Helper restarted on the new port")
+            self.app.toast("Restarted on the new port")

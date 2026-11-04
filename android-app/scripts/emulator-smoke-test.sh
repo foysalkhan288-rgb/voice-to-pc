@@ -23,9 +23,9 @@ if ! adb shell pidof "$package_name" >/dev/null 2>&1; then
   exit 1
 fi
 
-adb shell uiautomator dump /sdcard/voice-to-pc-window.xml >/dev/null
-adb pull /sdcard/voice-to-pc-window.xml "$RUNNER_TEMP/voice-to-pc-window.xml" >/dev/null
-read -r tap_x tap_y < <(python3 - "$RUNNER_TEMP/voice-to-pc-window.xml" <<'PY'
+adb shell uiautomator dump /sdcard/speaktype-window.xml >/dev/null
+adb pull /sdcard/speaktype-window.xml "$RUNNER_TEMP/speaktype-window.xml" >/dev/null
+read -r tap_x tap_y < <(python3 - "$RUNNER_TEMP/speaktype-window.xml" <<'PY'
 import re
 import sys
 import xml.etree.ElementTree as ET

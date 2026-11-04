@@ -7,7 +7,7 @@ import customtkinter as ctk
 
 from gui.pages.base import BasePage
 from gui.theme import CARD_CORNER_RADIUS, active_palette, get_fonts
-from voice_to_text_helper import PAIR_TTL_SECONDS
+from speaktype import PAIR_TTL_SECONDS
 
 
 class PairingPage(BasePage):
@@ -109,7 +109,7 @@ class PairingPage(BasePage):
     def new_code(self) -> None:
         service = self.app.service
         if not service.is_running:
-            self.app.toast("Start the helper before pairing.")
+            self.app.toast("Start SpeakType before pairing.")
             return
         self.payload = service.new_pairing()
         self.expires_at = time.monotonic() + PAIR_TTL_SECONDS
@@ -122,7 +122,7 @@ class PairingPage(BasePage):
     def unpair(self) -> None:
         if not self.app.service.paired():
             return
-        if not messagebox.askyesno("Voice to PC", "Unpair the phone? Dictation stops until you pair again."):
+        if not messagebox.askyesno("SpeakType", "Unpair the phone? Dictation stops until you pair again."):
             return
         self.app.service.unpair()
         self.app.refresh_status()

@@ -141,7 +141,7 @@ class DictationService : Service() {
             return
         }
         if (SecureConnectionStore(this).load() == null) {
-            finishSession("Not paired with a PC. Open Voice to PC to pair.")
+            finishSession("Not paired with a PC. Open SpeakType to pair.")
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -362,7 +362,7 @@ class DictationService : Service() {
     private fun sendTranscript(transcript: String) {
         val connection = SecureConnectionStore(this).load()
         if (connection == null) {
-            finishSession("Not paired with a PC. Open Voice to PC to pair.")
+            finishSession("Not paired with a PC. Open SpeakType to pair.")
             return
         }
         state = State.SENDING
@@ -472,7 +472,7 @@ class DictationService : Service() {
         val toggleAction = if (canStop) ACTION_STOP else ACTION_START
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mic)
-            .setContentTitle("Voice to PC")
+            .setContentTitle("SpeakType")
             .setContentText(contentText)
             .setStyle(Notification.BigTextStyle().bigText(contentText))
             .setOngoing(true)
@@ -513,7 +513,7 @@ class DictationService : Service() {
         updateNotification()
     }
 
-    // ------------------------------------------------------------------ lifecycle helpers
+    // ------------------------------------------------------------------ lifecycle
 
     /**
      * Shows the outcome of a session, then releases the service.
@@ -578,7 +578,7 @@ class DictationService : Service() {
         private const val FINISHING_TEXT = "Finishing…"
         private const val SENDING_TEXT = "Sending…"
         private const val MISSING_MIC_MESSAGE =
-            "Microphone permission is required. Tap to open Voice to PC and allow it."
+            "Microphone permission is required. Tap to open SpeakType and allow it."
 
         private const val FINALIZE_TIMEOUT_MS = 10_000L
         private const val SESSION_TIMEOUT_MS = 180_000L
@@ -668,7 +668,7 @@ class DictationService : Service() {
                 val manager = context.getSystemService(NotificationManager::class.java) ?: return
                 val notification = Notification.Builder(context, CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_stat_mic)
-                    .setContentTitle("Voice to PC")
+                    .setContentTitle("SpeakType")
                     .setContentText(message)
                     .setStyle(Notification.BigTextStyle().bigText(message))
                     .setAutoCancel(true)

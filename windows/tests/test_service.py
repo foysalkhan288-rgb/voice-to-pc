@@ -12,7 +12,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-import voice_to_text_helper as helper
+import speaktype as helper
 from settings import AppSettings
 
 
@@ -48,9 +48,9 @@ class ServiceTests(unittest.TestCase):
         self.typed.append((text, delay_ms))
         return len(text.encode("utf-16-le"))
 
-    def _make_service(self, **overrides) -> helper.VoiceHelperService:
+    def _make_service(self, **overrides) -> helper.SpeakTypeService:
         settings = AppSettings(port=0, **overrides)
-        service = helper.VoiceHelperService(
+        service = helper.SpeakTypeService(
             settings,
             app_dir_path=Path(self._temporary.name),
             release_sources=(),  # no build detection; tests publish the APK explicitly
@@ -60,7 +60,7 @@ class ServiceTests(unittest.TestCase):
         return service
 
     @staticmethod
-    def _port_of(service: helper.VoiceHelperService) -> int:
+    def _port_of(service: helper.SpeakTypeService) -> int:
         return service.server.server_address[1]
 
     def _request(
@@ -278,9 +278,9 @@ class ServiceTests(unittest.TestCase):
             archive.writestr("classes.dex", tag * (80 * 1024))
         return path.read_bytes()
 
-    def _make_publishing_service(self, sources) -> helper.VoiceHelperService:
+    def _make_publishing_service(self, sources) -> helper.SpeakTypeService:
         app_dir = Path(self._temporary.name) / "app"
-        service = helper.VoiceHelperService(
+        service = helper.SpeakTypeService(
             AppSettings(port=0), app_dir_path=app_dir, release_sources=tuple(sources)
         )
         self.addCleanup(service.stop)

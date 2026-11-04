@@ -6,7 +6,7 @@ import customtkinter as ctk
 
 from gui.pages.base import BasePage
 from gui.theme import CARD_CORNER_RADIUS, BUTTON_CORNER_RADIUS, active_palette, get_fonts
-from voice_to_text_helper import DEVICE_NAME, PREVIEW_TTL_SECONDS, local_ipv4_address
+from speaktype import DEVICE_NAME, PREVIEW_TTL_SECONDS, local_ipv4_address
 
 
 class DashboardPage(BasePage):
@@ -26,7 +26,7 @@ class DashboardPage(BasePage):
         for column in range(3):
             cards.grid_columnconfigure(column, weight=1)
 
-        self.server_card = self._card(cards, "Helper", "Stopped")
+        self.server_card = self._card(cards, "SpeakType", "Stopped")
         self.server_card.grid(row=0, column=0, padx=(0, 8), pady=(0, 8), sticky="nsew")
         self.phone_card = self._card(cards, "Phone", "Not paired")
         self.phone_card.grid(row=0, column=1, padx=8, pady=(0, 8), sticky="nsew")
@@ -43,7 +43,7 @@ class DashboardPage(BasePage):
         buttons.pack(fill="x", padx=4, pady=(0, 10))
         ctk.CTkButton(
             buttons,
-            text="Start / Stop helper",
+            text="Start / Stop",
             width=170,
             corner_radius=BUTTON_CORNER_RADIUS,
             command=self.toggle_server,
@@ -63,10 +63,25 @@ class DashboardPage(BasePage):
             command=lambda: self.app.show_page("settings"),
         ).pack(side="left")
 
+        self.firewall_banner = ctk.CTkFrame(
+            scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1,
+            fg_color=colors["card_bg"], border_color=colors["warning"],
+        )
+        ctk.CTkLabel(
+            self.firewall_banner,
+            text="Your phone cannot reach this PC until Windows Firewall allows SpeakType.",
+            font=self.fonts["body"], text_color=colors["text"], anchor="w", justify="left", wraplength=520,
+        ).pack(side="left", padx=14, pady=12)
+        ctk.CTkButton(
+            self.firewall_banner, text="Allow phone connections", width=180,
+            corner_radius=BUTTON_CORNER_RADIUS, command=self.app.fix_firewall,
+        ).pack(side="right", padx=12, pady=12)
+
         preview = ctk.CTkFrame(
             scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1, fg_color=colors["card_bg"], border_color=colors["card_border"]
         )
         preview.pack(fill="x", padx=4, pady=(0, 10))
+        self.preview_frame = preview
         ctk.CTkLabel(
             preview, text="Live preview", font=self.fonts["heading"], text_color=colors["text"], anchor="w"
         ).pack(fill="x", padx=14, pady=(12, 4))
@@ -143,8 +158,15 @@ class DashboardPage(BasePage):
             )
         else:
             self._set_card(self.build_card, "No APK yet — build the app", colors["warning"])
+        self._render_firewall_banner()
         self._render_preview()
         self._render_feed()
+
+    def _render_firewall_banner(self) -> None:
+        if getattr(self.app, "firewall_ok", True):
+            self.firewall_banner.pack_forget()
+        else:
+            self.firewall_banner.pack(fill="x", padx=4, pady=(0, 10), before=self.preview_frame)
 
     def _render_preview(self) -> None:
         colors = active_palette()
@@ -173,6 +195,6 @@ class DashboardPage(BasePage):
             else:
                 service.start()
         except OSError as exc:
-            self.app.toast(f"Could not start the helper: {exc}")
+            self.app.toast(f"Could not start SpeakType: {exc}")
         self.refresh()
         self.app.refresh_status()

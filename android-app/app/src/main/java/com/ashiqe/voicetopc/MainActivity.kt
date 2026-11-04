@@ -1,6 +1,8 @@
 package com.ashiqe.voicetopc
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -58,9 +60,9 @@ private const val MIC_PERMISSION_REQUEST = 401
 private const val CAMERA_PERMISSION_REQUEST = 402
 private const val NOTIFICATION_PERMISSION_REQUEST = 403
 private const val FINALIZE_TIMEOUT_MS = 10_000L
-private const val UPDATE_APK_NAME = "voice-to-pc.apk"
-internal const val PREFS_NAME = "voice_to_pc"
-private const val KEY_ALIAS = "voice_to_pc_connection_key"
+private const val UPDATE_APK_NAME = "speaktype.apk"
+internal const val PREFS_NAME = "speak_type"
+private const val KEY_ALIAS = "speak_type_connection_key"
 private const val KEY_ONLINE_MODE = "online_mode"
 internal const val KEY_OUTPUT_MODE = "output_mode"
 private const val KEY_LANGUAGE_MODE = "language_mode"
@@ -135,8 +137,11 @@ class MainActivity : AppCompatActivity() {
         if (privacyOnline == null) {
             setStatus("Choose Online or Offline speech recognition to get started.")
         }
+        createUpdateNotificationChannel()
         checkLink()
         requestNotificationPermission()
+        // Automatically look for a newer build on launch.
+        autoCheckForUpdate()
         // Keep the shade control available: dictate from any app without returning here.
         DictationNotifications.ensureReady(this)
     }
@@ -156,11 +161,37 @@ class MainActivity : AppCompatActivity() {
         checkLink()
     }
 
+    private fun createUpdateNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel("speaktype_updates") == null) {
+            val channel = NotificationChannel(
+                "speaktype_updates",
+                "App updates",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "Notifies when a newer SpeakType build is available." }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun notifyUpdateAvailable(info: UpdateInfo, fromPc: Boolean) {
+        val source = if (fromPc) "your PC" else "GitHub"
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = androidx.core.app.NotificationCompat.Builder(this, "speaktype_updates")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("SpeakType update available")
+            .setContentText("A newer build (${info.size / 1024} KB) is on $source. Tap to install.")
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(2001, notification)
+    }
+
     private fun checkLink() {
         val connection = SecureConnectionStore(this).load()
         if (connection == null) {
             linkState = "unpaired"
-            runOnUiThread { refreshUi() }
+            runOnUiThread { refreshUi(); autoCheckForUpdate() }
             return
         }
         worker.execute {
@@ -179,7 +210,7 @@ class MainActivity : AppCompatActivity() {
                 // Same-Wi-Fi sweep so a changed IP no longer needs a new QR scan.
                 linkState = if (discoverPc(connection)) "connected" else "unreachable"
             }
-            runOnUiThread { refreshUi() }
+            runOnUiThread { refreshUi(); autoCheckForUpdate() }
         }
     }
 
@@ -313,7 +344,7 @@ class MainActivity : AppCompatActivity() {
         )
         val shadeShow = button("Show Talk in the notification shade", primary = true) {
             DictationNotifications.ensureReady(this)
-            setStatus("Voice to PC is pinned to the notification shade. Swipe down to reach it from any app.")
+            setStatus("SpeakType is pinned to the notification shade. Swipe down to reach it from any app.")
         }
         shadeCard.addView(shadeShow, buttonParams().apply { topMargin = space(2) })
         val shadeHide = button("Remove from the notification shade", style = ButtonStyle.QUIET) {
@@ -585,7 +616,7 @@ class MainActivity : AppCompatActivity() {
         worker.execute {
             try {
                 val json = JSONObject(raw)
-                require(json.optString("app") == "voice-to-pc") { "This is not a Voice to PC QR code." }
+                require(json.optString("app") == "speaktype") { "This is not a SpeakType QR code." }
                 val host = json.getString("host")
                 val address = InetAddress.getByName(host)
                 require(address.isSiteLocalAddress || address.isLinkLocalAddress) {
@@ -867,12 +898,19 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (connection == null) {
-            checkGitHubUpdate()
+            checkGitHubUpdate(silent = false)
             return
         }
-        updateBusy = true
-        refreshUi()
-        setStatus("Checking the PC for a newer app build…")
+        checkPcUpdate(silent = false)
+    }
+
+    private fun checkPcUpdate(silent: Boolean) {
+        val connection = SecureConnectionStore(this).load() ?: return
+        if (!silent) {
+            updateBusy = true
+            refreshUi()
+            setStatus("Checking the PC for a newer app build…")
+        }
         worker.execute {
             try {
                 val release = getJson(
@@ -893,21 +931,33 @@ class MainActivity : AppCompatActivity() {
                     updateBusy = false
                     availableUpdate = found
                     refreshUi()
-                    setStatus(
-                        if (found != null) {
-                            "A newer build is on your PC (${found.size / 1024} KB). Tap Install update."
-                        } else {
-                            "The installed app already matches the build on your PC."
-                        }
-                    )
+                    if (!silent) {
+                        setStatus(
+                            if (found != null) {
+                                "A newer build is on your PC (${found.size / 1024} KB). Tap Install update."
+                            } else {
+                                "The installed app already matches the build on your PC."
+                            }
+                        )
+                    }
+                    if (found != null) notifyUpdateAvailable(found, fromPc = true)
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     updateBusy = false
                     refreshUi()
-                    setStatus("Could not check for updates: ${error.message ?: "connection error"}")
+                    if (!silent) setStatus("Could not check for updates: ${error.message ?: "connection error"}")
                 }
             }
+        }
+    }
+
+    private fun autoCheckForUpdate() {
+        val connection = SecureConnectionStore(this).load()
+        if (connection != null && linkState == "connected") {
+            checkPcUpdate(silent = true)
+        } else if (connection == null) {
+            checkGitHubUpdate(silent = true)
         }
     }
 
@@ -929,13 +979,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun installAvailableUpdate(connection: PcConnection) {
         if (!packageManager.canRequestPackageInstalls()) {
-            setStatus("Allow Voice to PC to install updates, then tap Install update again.")
+            setStatus("Allow SpeakType to install updates, then tap Install update again.")
             try {
                 startActivity(
                     Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
                 )
             } catch (_: Exception) {
-                setStatus("Open Settings and allow installs from Voice to PC.")
+                setStatus("Open Settings and allow installs from SpeakType.")
             }
             return
         }
@@ -975,19 +1025,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkGitHubUpdate() {
+    private fun checkGitHubUpdate(silent: Boolean = false) {
         updateBusy = true
         refreshUi()
-        setStatus("Checking GitHub for a newer build…")
+        if (!silent) setStatus("Checking GitHub for a newer build…")
         worker.execute {
             try {
-                val url = URL("https://api.github.com/repos/foysalkhan288-rgb/voice-to-pc/releases/latest")
+                val url = URL("https://api.github.com/repos/foysalkhan288-rgb/SpeakType/releases/latest")
                 val connection = (url.openConnection() as HttpsURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 10_000
                     readTimeout = 15_000
                     setRequestProperty("Accept", "application/vnd.github+json")
-                    setRequestProperty("User-Agent", "VoiceToPC")
+                    setRequestProperty("User-Agent", "SpeakType")
                 }
                 val responseText = connection.inputStream.use { it.bufferedReader().readText() }
                 connection.disconnect()
@@ -1015,13 +1065,14 @@ class MainActivity : AppCompatActivity() {
                     availableUpdate = found
                     githubUpdateUrl = assetUrl
                     refreshUi()
-                    setStatus(if (found != null) "A newer build is on GitHub. Tap Install update." else "Already up to date.")
+                    if (found != null) notifyUpdateAvailable(found, fromPc = false)
+                    if (!silent) setStatus(if (found != null) "A newer build is on GitHub. Tap Install update." else "Already up to date.")
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     updateBusy = false
                     refreshUi()
-                    setStatus("Could not check GitHub: ${error.message ?: "connection error"}")
+                    if (!silent) setStatus("Could not check GitHub: ${error.message ?: "connection error"}")
                 }
             }
         }

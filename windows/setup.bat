@@ -12,7 +12,7 @@ if errorlevel 1 (
 if not exist ".venv\Scripts\python.exe" (
   py -3 -m venv .venv
   if errorlevel 1 (
-    echo Could not create the helper's Python environment.
+    echo Could not create the Python environment.
     pause
     exit /b 1
   )
@@ -20,7 +20,7 @@ if not exist ".venv\Scripts\python.exe" (
 
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 (
-  echo Could not install helper dependencies. Check your internet connection and try again.
+  echo Could not install dependencies. Check your internet connection and try again.
   pause
   exit /b 1
 )

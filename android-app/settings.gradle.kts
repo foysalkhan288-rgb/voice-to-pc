@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VoiceToPC"
+rootProject.name = "SpeakType"
 include(":app")

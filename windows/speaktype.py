@@ -11,6 +11,7 @@ import os
 import secrets
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -27,14 +28,14 @@ from PIL import Image
 from settings import AppSettings, app_dir
 
 
-APP_NAME = "Voice to PC"
+APP_NAME = "SpeakType"
 APP_DIR = app_dir()
 PORT = 48765
 MAX_BODY = 64 * 1024
 MAX_TEXT = 12_000
 PAIR_TTL_SECONDS = 180
 MAX_DELIVERED_IDS = 512
-APP_RELEASE_NAME = "voice-to-pc.apk"
+APP_RELEASE_NAME = "speaktype.apk"
 PREVIEW_TTL_SECONDS = 6.0
 RELEASE_WATCH_SECONDS = 2.0
 MIN_APK_BYTES = 64 * 1024
@@ -50,7 +51,15 @@ BUILD_APK_PATH = (
     / "app-debug.apk"
 )
 STARTUP_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-STARTUP_ENTRY = "VoiceToPC"
+STARTUP_ENTRY = "SpeakType"
+FIREWALL_RULE_NAME = "SpeakType"
+FIREWALL_FLAG = "--allow-firewall"
+
+
+def asset_path(name: str) -> Path:
+    """Find a bundled asset in both a source checkout and a PyInstaller one-file build."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / name
 DEVICE_NAME = socket.gethostname()
 
 KEYEVENTF_KEYUP = 0x0002
@@ -172,7 +181,7 @@ def ensure_certificate(app_dir_path: Path | None = None) -> tuple[str, str, str]
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "Voice to PC local helper")]
+        [x509.NameAttribute(NameOID.COMMON_NAME, "SpeakType")]
     )
     now = datetime.datetime.now(datetime.timezone.utc)
     certificate = (
@@ -346,6 +355,89 @@ def type_unicode_text(text: str, delay_ms: float = 0.0) -> int:
     return sent
 
 
+def firewall_program() -> str:
+    """The executable Windows Firewall has to allow: the process that owns the socket."""
+    return str(Path(sys.executable).resolve())
+
+
+def _netsh(args: list[str]) -> str:
+    completed = subprocess.run(
+        ["netsh", "advfirewall", "firewall", *args],
+        capture_output=True,
+        timeout=25,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    raw = (completed.stdout or b"") + (completed.stderr or b"")
+    # netsh writes in the OEM code page, so decode with mbcs and never fail on a stray byte.
+    return raw.decode("mbcs", errors="replace") if raw else ""
+
+
+def _comparable_path(value: str) -> str:
+    """Lower-case and unify separators so a path compares equal however it was written."""
+    return value.replace("/", "\\").lower()
+
+
+def firewall_rule_present(program: str | None = None) -> bool:
+    """True when an inbound rule already mentions this executable.
+
+    The rule name alone is not enough: a rule created by the Windows prompt carries a
+    different name, so the fallback scan looks for the program path in every inbound rule.
+    """
+    target = _comparable_path(program or firewall_program())
+    try:
+        fast = _netsh(["show", "rule", f"name={FIREWALL_RULE_NAME}", "verbose"])
+        if target in _comparable_path(fast):
+            return True
+        full = _netsh(["show", "rule", "name=all", "dir=in", "verbose"])
+        return target in _comparable_path(full)
+    except (OSError, subprocess.SubprocessError):
+        # If the firewall cannot be inspected, stay quiet rather than nagging the user.
+        return True
+
+
+def add_firewall_rule(program: str | None = None) -> bool:
+    """Create the inbound allow rule. Only succeeds in an elevated process."""
+    target = program or firewall_program()
+    try:
+        # Delete first so a rule left behind by an older install path cannot linger.
+        _netsh(["delete", "rule", f"name={FIREWALL_RULE_NAME}"])
+        completed = subprocess.run(
+            [
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name={FIREWALL_RULE_NAME}",
+                "dir=in",
+                "action=allow",
+                f"program={target}",
+                "enable=yes",
+                "profile=any",
+                "protocol=TCP",
+            ],
+            capture_output=True,
+            timeout=25,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def request_firewall_rule() -> bool:
+    """Ask Windows for elevation and add the rule; False when the user declines."""
+    if getattr(sys, "frozen", False):
+        executable = sys.executable
+        params = FIREWALL_FLAG
+    else:
+        executable = sys.executable
+        params = f'"{Path(__file__).resolve()}" {FIREWALL_FLAG}'
+    try:
+        shell32 = ctypes.windll.shell32
+        shell32.ShellExecuteW.restype = wintypes.HINSTANCE
+        result = shell32.ShellExecuteW(None, "runas", executable, params, None, 1)
+    except Exception:
+        return False
+    return int(result or 0) > 32  # ShellExecute returns >32 on success, an error code otherwise
+
+
 def autostart_enabled() -> bool:
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY) as key:
         try:
@@ -370,7 +462,7 @@ def set_autostart(enabled: bool) -> None:
                 pass
 
 
-class HelperState:
+class AppState:
     def __init__(self, app_dir_path: Path | None = None) -> None:
         self.lock = threading.RLock()
         self.app_dir = app_dir_path or APP_DIR
@@ -517,10 +609,10 @@ class HelperState:
 
 
 class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
-    server_version = "VoiceToPC/1.0"
+    server_version = "SpeakType/1.0"
 
     @property
-    def state(self) -> HelperState:
+    def state(self) -> AppState:
         return self.server.state  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args) -> None:
@@ -730,12 +822,12 @@ class VoiceHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, state: HelperState):
+    def __init__(self, address, handler, state: AppState):
         self.state = state
         super().__init__(address, handler)
 
 
-class VoiceHelperService:
+class SpeakTypeService:
     """Owns the TLS server, pairing state, and certificate lifecycle for the GUI."""
 
     def __init__(
@@ -750,7 +842,7 @@ class VoiceHelperService:
         self.release_sources = release_sources
         self._release_stop = threading.Event()
         self._release_thread: threading.Thread | None = None
-        self.state = HelperState(self.app_dir)
+        self.state = AppState(self.app_dir)
         self.state.settings = settings
         self.server: VoiceHTTPServer | None = None
         self.server_thread: threading.Thread | None = None
@@ -782,7 +874,7 @@ class VoiceHelperService:
         self.server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         self.server_thread.start()
         self._start_release_watch()
-        self.state.status(f"Helper listening on {local_ipv4_address()}:{self.settings.port}")
+        self.state.status(f"Listening on {local_ipv4_address()}:{self.settings.port}")
 
     def _start_release_watch(self) -> None:
         if self.release_sources is not None and not self.release_sources:
@@ -831,7 +923,7 @@ class VoiceHelperService:
             pass
         if thread is not None:
             thread.join(timeout=2.0)
-        self.state.status("Helper stopped")
+        self.state.status("Stopped")
 
     def new_pairing(self) -> dict:
         """Issue a fresh one-time pairing code and return the QR payload for it."""
@@ -840,7 +932,7 @@ class VoiceHelperService:
             self.state.bootstrap_code = code
             self.state.bootstrap_expires = time.monotonic() + PAIR_TTL_SECONDS
         return {
-            "app": "voice-to-pc",
+            "app": "speaktype",
             "host": local_ipv4_address(),
             "port": self.settings.port,
             "code": code,
@@ -888,9 +980,42 @@ class VoiceHelperService:
             notifier(message)
 
 
+_SINGLE_INSTANCE_MUTEX = "Local\\SpeakType.SingleInstance"
+_single_instance_handle = None
+
+
+def claim_single_instance() -> bool:
+    """False when another SpeakType already owns the session mutex.
+
+    Autostart and a manual run.bat would otherwise race for the port and show an
+    error dialog that looks like a failure.
+    """
+    global _single_instance_handle
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        _single_instance_handle = kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX)
+        if not _single_instance_handle:
+            return True
+        return kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    except Exception:  # pragma: no cover - never block startup on the guard
+        return True
+
+
 def main() -> None:
     if os.name != "nt":
-        raise SystemExit("This helper is designed for Windows 10/11.")
+        raise SystemExit("SpeakType is designed for Windows 10/11.")
+    if FIREWALL_FLAG in sys.argv:
+        # Elevated helper launched by request_firewall_rule(): add the rule and leave.
+        raise SystemExit(0 if add_firewall_rule() else 1)
+    if not claim_single_instance():
+        from tkinter import messagebox
+
+        messagebox.showinfo(
+            APP_NAME, "SpeakType is already running. Open it from the tray icon."
+        )
+        return
     from gui.app import run_gui
 
     run_gui()

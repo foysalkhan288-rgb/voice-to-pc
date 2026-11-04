@@ -1,16 +1,16 @@
 # Contributing
 
-Thanks for your interest in contributing to Voice to PC.
+Thanks for your interest in contributing to SpeakType.
 
 ## Development setup
 
-- Windows 10/11 with Python 3.11+ for the helper (`windows-helper/setup.bat`).
+- Windows 10/11 with Python 3.11+ for SpeakType (`windows/setup.bat`).
 - Android Studio / JDK 17 for the app (`android-app`).
 
 ## Running tests
 
 ```bash
-cd windows-helper
+cd windows
 .venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
@@ -22,5 +22,5 @@ cd android-app
 ## Pull requests
 
 - Keep changes focused and minimal.
-- Add tests for new helper behavior.
+- Add tests for new app behavior.
 - Do not commit build artifacts (`dist/`, `build/`, `*.apk`).

@@ -6,7 +6,7 @@ import customtkinter as ctk
 
 from gui.pages.base import BasePage
 from gui.theme import CARD_CORNER_RADIUS, active_palette, get_fonts
-from voice_to_text_helper import APP_DIR, MAX_TEXT
+from speaktype import APP_DIR, MAX_TEXT
 
 
 class SecurityPage(BasePage):
@@ -89,7 +89,7 @@ class SecurityPage(BasePage):
 
     def replace_certificate(self) -> None:
         if not messagebox.askyesno(
-            "Voice to PC",
+            "SpeakType",
             "Replace the certificate? The current phone pairing is invalidated and you must scan a new QR code.",
         ):
             return
@@ -101,7 +101,7 @@ class SecurityPage(BasePage):
         if not self.app.service.paired():
             self.app.toast("No phone is paired.")
             return
-        if not messagebox.askyesno("Voice to PC", "Unpair the phone? Dictation stops until you pair again."):
+        if not messagebox.askyesno("SpeakType", "Unpair the phone? Dictation stops until you pair again."):
             return
         self.app.service.unpair()
         self.app.refresh_status()

@@ -21,7 +21,7 @@ android {
     // key matches, so a per-run key forced an uninstall (and a lost pairing) after each build.
     signingConfigs {
         getByName("debug") {
-            storeFile = file("keystore/voice-to-pc-debug.jks")
+            storeFile = file("keystore/speaktype-debug.jks")
             storePassword = "voicetopc"
             keyAlias = "voicetopc"
             keyPassword = "voicetopc"

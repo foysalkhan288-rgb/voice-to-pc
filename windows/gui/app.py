@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import threading
 import tkinter.messagebox as messagebox
 
 import customtkinter as ctk
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageTk
 
 from gui.pages import DashboardPage, PairingPage, SecurityPage, SettingsPage
 from gui.pages.base import BasePage
@@ -17,11 +18,15 @@ from gui.theme import (
     get_fonts,
 )
 from settings import AppSettings
-from voice_to_text_helper import (
+from speaktype import (
+    APP_DIR,
     APP_NAME,
     DEVICE_NAME,
-    VoiceHelperService,
+    SpeakTypeService,
+    asset_path,
+    firewall_rule_present,
     local_ipv4_address,
+    request_firewall_rule,
     set_autostart,
 )
 
@@ -38,14 +43,14 @@ NAV_ITEMS: tuple[tuple[str, str, type[BasePage]], ...] = (
 class VoiceToPcApp:
     root: ctk.CTk
     settings: AppSettings
-    service: VoiceHelperService
+    service: SpeakTypeService
     pages: dict[str, BasePage]
 
     def __init__(self) -> None:
         self.settings = AppSettings.load()
         palette = apply_theme(self.settings.theme)
-        self.service = VoiceHelperService(self.settings)
-        self.service.on_event = self._on_helper_event
+        self.service = SpeakTypeService(self.settings)
+        self.service.on_event = self._on_service_event
         self.service.notifier = self._notify
         self.service.state.preview_callback = self._on_preview
         self.current_page: BasePage | None = None
@@ -53,6 +58,7 @@ class VoiceToPcApp:
 
         self.root = ctk.CTk()
         self.root.title(APP_NAME)
+        self._apply_window_icon()
         self.root.geometry(WINDOW_SIZE)
         self.root.minsize(*WINDOW_MIN_SIZE)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
@@ -80,8 +86,8 @@ class VoiceToPcApp:
         except OSError as exc:
             messagebox.showerror(
                 APP_NAME,
-                f"The helper could not listen on port {self.settings.port}: {exc}\n\n"
-                "Another program may be using it. Change the port in Settings, then start the helper.",
+                f"SpeakType could not listen on port {self.settings.port}: {exc}\n\n"
+                "Another program may be using it. Change the port in Settings, then start SpeakType.",
             )
         try:
             set_autostart(self.settings.start_with_windows)
@@ -89,8 +95,92 @@ class VoiceToPcApp:
             pass
         self.refresh_status()
 
+        self.firewall_ok = True
+        self._firewall_prompted = (APP_DIR / ".firewall-asked").exists()
+        threading.Thread(target=self._check_firewall, daemon=True).start()
+
         if self.settings.start_minimized:
             self.root.withdraw()
+
+    def _check_firewall(self) -> None:
+        """Off the UI thread: the netsh query takes about a second."""
+        try:
+            present = firewall_rule_present()
+        except Exception:
+            present = True
+        self.firewall_ok = present
+        try:
+            self.root.after(0, self._on_firewall_result)
+        except Exception:
+            pass
+
+    def _on_firewall_result(self) -> None:
+        if self.current_page is not None:
+            self.current_page.tick()
+        if self.firewall_ok:
+            return
+        if not self._firewall_prompted:
+            self._firewall_prompted = True
+            try:
+                (APP_DIR / ".firewall-asked").write_text("asked", encoding="utf-8")
+            except OSError:
+                pass
+            if messagebox.askyesno(
+                APP_NAME,
+                "Your phone cannot reach this PC until Windows Firewall allows SpeakType.\n\n"
+                "Allow it now? Windows will ask you to confirm.",
+            ):
+                self.fix_firewall()
+
+    def fix_firewall(self) -> None:
+        """One elevation prompt, then re-check what actually landed."""
+        try:
+            launched = request_firewall_rule()
+        except Exception:
+            launched = False
+        if not launched:
+            self.toast("Firewall change was cancelled")
+            return
+        self.toast("Waiting for Windows to add the firewall rule…")
+        self.root.after(3500, self._recheck_firewall)
+
+    def _recheck_firewall(self) -> None:
+        threading.Thread(target=self._finish_firewall_check, daemon=True).start()
+
+    def _finish_firewall_check(self) -> None:
+        try:
+            self.firewall_ok = firewall_rule_present()
+        except Exception:
+            self.firewall_ok = True
+        try:
+            self.root.after(0, self._apply_firewall_result)
+        except Exception:
+            pass
+
+    def _apply_firewall_result(self) -> None:
+        for page in self.pages.values():
+            page.on_settings_changed()
+        if self.current_page is not None:
+            self.current_page.tick()
+        self.toast(
+            "Phone connections allowed"
+            if self.firewall_ok
+            else "Windows did not add the rule — try again from Settings"
+        )
+
+    def _apply_window_icon(self) -> None:
+        """Title-bar and taskbar icon; the .ico carries every size Windows asks for."""
+        try:
+            self.root.iconbitmap(str(asset_path("speaktype.ico")))
+            return
+        except Exception:
+            pass
+        try:
+            photo = ImageTk.PhotoImage(Image.open(asset_path("speaktype.png")))
+            self.root.iconphoto(True, photo)
+            self._window_icon_photo = photo  # keep a reference or Tk drops it
+        except Exception:
+            pass
 
     def _build_sidebar(self, palette: dict[str, str]) -> None:
         sidebar = ctk.CTkFrame(self.root, width=SIDEBAR_WIDTH, corner_radius=0, fg_color=palette["sidebar_bg"])
@@ -188,7 +278,7 @@ class VoiceToPcApp:
         if service.is_running:
             state = f"Running on {local_ipv4_address()}:{self.settings.port}  ·  same Wi-Fi only"
         else:
-            state = "Helper stopped"
+            state = "Stopped"
         pairing = "phone paired" if service.paired() else "no phone paired"
         self.status_label.configure(text=f"{state}  ·  {pairing}")
 
@@ -206,7 +296,7 @@ class VoiceToPcApp:
             self.service.stop()
             self.service.start()
         except OSError as exc:
-            messagebox.showerror(APP_NAME, f"Could not restart the helper: {exc}")
+            messagebox.showerror(APP_NAME, f"Could not restart SpeakType: {exc}")
         self.refresh_status()
         for page in self.pages.values():
             page.on_settings_changed()
@@ -240,7 +330,7 @@ class VoiceToPcApp:
             self.current_page.tick()
         self.root.after(1000, self._periodic)
 
-    def _on_helper_event(self, message: str) -> None:
+    def _on_service_event(self, message: str) -> None:
         def update() -> None:
             self.refresh_status()
             if self.current_page is not None:
@@ -269,18 +359,26 @@ class VoiceToPcApp:
         except Exception:
             pass
 
+    def _tray_image(self) -> Image.Image:
+        try:
+            return Image.open(asset_path("speaktype-tray.png")).convert("RGBA")
+        except Exception:
+            # Drawn fallback so a missing asset can never leave the tray blank.
+            image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            draw.rounded_rectangle((0, 0, 63, 63), radius=14, fill=(33, 110, 80, 255))
+            draw.ellipse((9, 9, 55, 55), fill=(245, 255, 250, 255))
+            draw.text((19, 18), "V", fill=(33, 110, 80, 255), stroke_width=1)
+            return image
+
     def _create_tray_icon(self) -> pystray.Icon:
-        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((0, 0, 63, 63), radius=14, fill=(33, 110, 80, 255))
-        draw.ellipse((9, 9, 55, 55), fill=(245, 255, 250, 255))
-        draw.text((19, 18), "V", fill=(33, 110, 80, 255), stroke_width=1)
+        image = self._tray_image()
         menu = pystray.Menu(
             pystray.MenuItem("Show dashboard", self._tray_show),
             pystray.MenuItem("Pair phone…", self._tray_pair),
             pystray.MenuItem("Quit", self._tray_quit),
         )
-        return pystray.Icon("voice-to-pc", image, APP_NAME, menu)
+        return pystray.Icon("speaktype", image, APP_NAME, menu)
 
     def _tray_show(self, icon=None, item=None) -> None:
         self.root.after(0, self.show_window)

@@ -1,4 +1,4 @@
-"""Persistent user settings for the Voice to PC Windows helper."""
+"""Persistent user settings for SpeakType for Windows."""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,8 @@ THEMES = ("dark", "light")
 
 
 def app_dir() -> Path:
-    """Local application data folder shared with the helper's certificate and pairing token."""
-    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "VoiceToTextPC"
+    """Local application data folder shared with the app's certificate and pairing token."""
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SpeakType"
 
 
 def _as_int(value: object, default: int) -> int:

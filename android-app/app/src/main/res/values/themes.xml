@@ -4,7 +4,7 @@
     off-white page, deep-emerald accent, light system bars so the status bar never fights the UI.
 -->
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.VoiceToPC" parent="Theme.AppCompat.Light.NoActionBar">
+    <style name="Theme.SpeakType" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">#1F7A57</item>
         <item name="colorPrimaryDark">#186445</item>
         <item name="colorAccent">#1F7A57</item>

@@ -48,7 +48,7 @@ class DictationTileService : TileService() {
             // Nothing can record yet: explain, and let the tap open the app to grant access.
             DictationService.notifyHint(
                 this,
-                "Microphone permission is required. Tap to open Voice to PC and allow it.",
+                "Microphone permission is required. Tap to open SpeakType and allow it.",
             )
             openApp()
             applyState(false)

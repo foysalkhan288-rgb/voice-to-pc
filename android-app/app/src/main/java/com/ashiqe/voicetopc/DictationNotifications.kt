@@ -35,7 +35,7 @@ object DictationNotifications {
     private const val REQUEST_OPEN = 21
     private const val REQUEST_HIDE = 22
 
-    private const val TITLE = "Voice to PC"
+    private const val TITLE = "SpeakType"
     private const val READY_TEXT = "Tap Talk to dictate from any app"
 
     /**
