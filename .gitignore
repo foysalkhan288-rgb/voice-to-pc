@@ -22,3 +22,11 @@ windows/*.spec
 
 # Kotlin/Gradle caches
 android-app/.kotlin/
+
+# Keystores - only the shared debug key is tracked; release keys must never be committed
+android-app/app/keystore/*.jks
+!android-app/app/keystore/speaktype-debug.jks
+*.keystore
+
+# Release checksums
+SHA256SUMS.txt

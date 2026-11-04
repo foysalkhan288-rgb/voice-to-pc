@@ -1,0 +1,4 @@
+* text=auto
+*.apk binary
+*.jks binary
+*.bat eol=crlf

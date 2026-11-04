@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation and usage
+    url: https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/README.md
+    about: Please read the README before filing an issue.
+  - name: Security issues
+    url: https://github.com/foysalkhan288-rgb/voice-to-pc/security/advisories/new
+    about: Report vulnerabilities privately via GitHub Security Advisories. See SECURITY.md. Do not open a public issue for security reports.
