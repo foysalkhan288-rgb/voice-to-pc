@@ -49,7 +49,7 @@ android {
         getByName("debug") {
             signingConfig = signingConfigs.getByName("debug")
         }
-        create("release") {
+        getByName("release") {
             signingConfig = signingConfigs.getByName("release")
         }
     }
