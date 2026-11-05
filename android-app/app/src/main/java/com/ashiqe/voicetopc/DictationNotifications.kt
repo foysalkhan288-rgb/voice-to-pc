@@ -26,8 +26,8 @@ object DictationNotifications {
     /** Set when the user hid the ready notification; survives service restarts and reboots. */
     private const val KEY_READY_HIDDEN = "ready_hidden"
 
-    /** Low importance so the shortcut never makes a sound or draws attention to itself. */
-    private const val CHANNEL_ID = "dictation_ready"
+    /** New channel ID so existing LOW-importance channels are recreated at DEFAULT. */
+    private const val CHANNEL_ID = "dictation_ready_v2"
     private const val NOTIFICATION_ID = 1003
 
     // Distinct from the service request codes so the two notifications cannot share a PendingIntent.
@@ -104,15 +104,19 @@ object DictationNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val icon = Icon.createWithResource(context, R.drawable.ic_stat_mic)
+        // Tap on the notification body itself starts Talk so the actions never need expanding.
         return Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mic)
             .setContentTitle(TITLE)
             .setContentText(READY_TEXT)
-            .setStyle(Notification.BigTextStyle().bigText(READY_TEXT))
+            .setStyle(Notification.BigTextStyle().bigText("Tap to start dictation from any app."))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .setContentIntent(open)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setPriority(Notification.PRIORITY_DEFAULT)
+            .setCategory(Notification.CATEGORY_CALL)
+            .setContentIntent(talk)
             .addAction(Notification.Action.Builder(icon, "Talk", talk).build())
             .addAction(Notification.Action.Builder(icon, "Open", open).build())
             .addAction(Notification.Action.Builder(icon, "Hide", hide).build())
@@ -128,7 +132,7 @@ object DictationNotifications {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Dictation shortcut",
-                NotificationManager.IMPORTANCE_LOW,
+                NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
                 description = "Always-available Talk shortcut for dictating from any app."
                 setShowBadge(false)

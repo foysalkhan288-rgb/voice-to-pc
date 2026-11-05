@@ -240,6 +240,10 @@ class DictationService : Service() {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        // Allow brief pauses mid-sentence instead of ending on the platform default.
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500)
         putExtra(
             RecognizerIntent.EXTRA_LANGUAGE,
             if (outputMode == "english") "en-US" else "bn-BD",
@@ -332,7 +336,7 @@ class DictationService : Service() {
         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
             "The speech service has a network error."
         SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-            "No speech was recognized. Nothing was sent."
+            "Didn't hear anything — tap Talk and speak again. Nothing was sent."
         else -> "Speech recognition failed (code $error). Nothing was sent."
     }
 

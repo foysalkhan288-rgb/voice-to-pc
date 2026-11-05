@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private val preferences by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
     private lateinit var statusView: TextView
+    private lateinit var statusLiveDot: TextView
     private lateinit var privacyView: TextView
     private lateinit var connectionView: TextView
     private lateinit var outputValue: TextView
@@ -316,14 +317,31 @@ class MainActivity : AppCompatActivity() {
         dictationCard.addView(holdButton, buttonParams().apply { topMargin = space(1) })
         val statusPanel = Design.panel(this)
         statusPanel.addView(Design.overline(this, "STATUS"), matchWrap())
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        statusLiveDot = Design.dot(this, Palette.SUCCESS)
+        statusRow.addView(
+            statusLiveDot,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = space(1) },
+        )
         statusView = Design.value(this, "Ready when you are.").apply {
             setTextColor(Palette.MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             gravity = Gravity.START
             setLineSpacing(dp(3).toFloat(), 1f)
-            setPadding(0, space(1), 0, 0)
         }
-        statusPanel.addView(statusView, matchWrap())
+        statusRow.addView(
+            statusView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                topMargin = space(1)
+            },
+        )
+        statusPanel.addView(statusRow, matchWrap())
         dictationCard.addView(statusPanel, matchWrap().apply { topMargin = space(2) })
         retryButton = button("Retry sending") { retryPending() }
         dictationCard.addView(retryButton, buttonParams().apply { topMargin = space(2) })
@@ -678,6 +696,9 @@ class MainActivity : AppCompatActivity() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500)
                 when {
                     outputMode == "english" -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                     Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> {
@@ -727,7 +748,7 @@ class MainActivity : AppCompatActivity() {
                     SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "The speech service does not support this language."
                     SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "The language model is unavailable. Download it for offline use or choose another language."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "The speech service has a network error."
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech was recognized. Nothing was sent."
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't hear anything — tap Start speaking and speak again. Nothing was sent."
                     else -> "Speech recognition failed (code $error). Nothing was sent."
                 }
                 setStatus(explanation)
@@ -1127,6 +1148,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun setStatus(message: String) {
         if (::statusView.isInitialized) statusView.text = message
+        if (::statusLiveDot.isInitialized) {
+            val color = when {
+                message.startsWith("Listening") || message.startsWith("Speak now") ||
+                    message.contains("sent to your PC", ignoreCase = true) ||
+                    message.contains("Paired with") ||
+                    message.contains("already sent") -> Palette.SUCCESS
+                message.contains("failed", ignoreCase = true) ||
+                    message.contains("Could not") ||
+                    message.contains("No speech", ignoreCase = true) ||
+                    message.contains("No text was recognized") ||
+                    message.contains("network error", ignoreCase = true) -> Palette.DANGER
+                message.contains("Checking") || message.contains("Sending") ||
+                    message.contains("Preparing") || message.contains("Finishing") ||
+                    message.contains("Downloading") || message.contains("Speech ended") -> Palette.WARNING
+                else -> Palette.MUTED
+            }
+            statusLiveDot.setTextColor(color)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
