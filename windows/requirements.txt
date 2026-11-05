@@ -1,5 +1,5 @@
 cryptography>=45.0
 Pillow>=11.0
-pystray>=0.19
+pystray>=0.19.5
 qrcode[pil]>=8.0
 customtkinter>=6.0.0
