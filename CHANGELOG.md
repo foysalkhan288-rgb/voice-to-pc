@@ -6,10 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [v1.2.0] - 2026-11-05
+
+### Added
+
+- Production-ready open-source polish: README badges/install/settings docs, ARCHITECTURE/API/TROUBLESHOOTING guides, issue/PR templates, Dependabot, `.gitattributes`/`.editorconfig` (`8a3b0fd`).
+- Release APK build with SHA-256 checksums (`app-release.apk` + `SHA256SUMS.txt` on the `latest` release) and env-based release signing that falls back to the debug key (`712cf21`).
+
 ### Changed
 
 - Rebrand to SpeakType and rename the Windows helper to `windows`; fix the GitHub APK build (`36200b1`).
 - Simplify Actions to a green APK build (remove emulator gating) (`5c9e3cc`).
+- Bump `appcompat` to 1.8.0, `customtkinter` to >=6.0.0; repo description/topics/homepage set to the `latest` release.
 
 ### Fixed
 
