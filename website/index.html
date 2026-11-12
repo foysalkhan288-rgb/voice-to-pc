@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpeakType — Your voice, typed. Free &amp; open source dictation for Windows + Android</title>
+<meta name="description" content="SpeakType turns your speech into text in any app on your Windows PC. Your phone recognizes speech on-device, your PC types it. Local network only, no account, no telemetry, no model downloads. MIT licensed.">
+<meta name="theme-color" content="#0a0f0d">
+<meta property="og:title" content="SpeakType — Your voice, typed.">
+<meta property="og:description" content="Free & open source dictation. Your phone transcribes on-device, your PC types. No cloud. No account.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script defer src="main.js"></script>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="top">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="SpeakType home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="26" height="26"><rect width="64" height="64" rx="14" fill="currentColor"/><g fill="none" stroke="var(--site-on-accent)" stroke-width="5" stroke-linecap="round"><rect x="26" y="12" width="12" height="24" rx="6" fill="var(--site-on-accent)" stroke="none"/><path d="M18 30v2a14 14 0 0 0 28 0v-2"/><path d="M32 46v8"/><path d="M24 54h16"/></g></svg>
+      </span>
+      <span class="brand-name">SpeakType</span>
+    </a>
+    <nav class="nav-links" id="navLinks" aria-label="Primary">
+      <a href="#why">Why SpeakType</a>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn btn-primary btn-nav" href="#download">Download</a>
+    </nav>
+    <button class="nav-burger" id="burger" aria-expanded="false" aria-controls="navLinks" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero">
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow reveal"><span class="sq" aria-hidden="true"></span>FREE &amp; OPEN SOURCE · WINDOWS · ANDROID</p>
+      <h1 class="reveal d1">Your voice,<br><span class="typed-word">typed.<span class="caret" aria-hidden="true"></span></span></h1>
+      <p class="lede reveal d2">SpeakType turns your speech into text in any app — editors, browsers, chat, terminals. Your phone recognizes speech with its own on-device voice engine; your PC just types. No model downloads, no cloud, no account.</p>
+      <div class="cta-row reveal d3">
+        <a class="btn btn-primary" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/v1.1.0/VoiceToPC.exe" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>
+          Download for Windows</a>
+        <a class="btn btn-ghost" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/latest/app-release.apk" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
+          Get the Android APK</a>
+      </div>
+      <p class="alt-link reveal d4"><a href="#platforms">Other platforms &amp; checksums →</a></p>
+      <p class="meta reveal d4">v1.7.0 · MIT licensed · No telemetry</p>
+      <div class="stats reveal d5">
+        <div><strong>4x</strong><span>faster than typing</span></div>
+        <div><strong>100%</strong><span>on-device</span></div>
+        <div><strong>0</strong><span>accounts or clouds</span></div>
+      </div>
+    </div>
+    <div class="hero-visual reveal d2">
+      <button class="listen-card" id="listenCard" aria-pressed="true" aria-label="Toggle the listening demo">
+        <span class="listen-head"><span class="dot dot-live" id="listenDot"></span><span id="listenTitle">SpeakType is listening…</span></span>
+        <span class="wave" id="wave" aria-hidden="true"></span>
+        <span class="transcript"><span id="heroTranscript"></span><span class="caret caret-sm" aria-hidden="true"></span></span>
+        <span class="listen-status"><span class="dot dot-live" id="statusDot"></span><span id="listenStatus">Listening — tap to stop</span></span>
+      </button>
+      <div class="notepad" aria-hidden="true">
+        <div class="notepad-bar"><span class="win-dots"><i></i><i></i><i></i></span>Meeting notes — Notepad</div>
+        <p class="notepad-body"><span class="underline" id="notepadText"></span><span class="caret caret-sm"></span></p>
+      </div>
+      <p class="visual-caption">No cloud. No account. No audio ever leaves your device.</p>
+    </div>
+  </div>
+</section>
+
+<section id="why" class="section">
+  <div class="container why-grid">
+    <div class="why-left">
+      <p class="kicker">Why SpeakType</p>
+      <h2>Dictation that<br>stays yours.</h2>
+      <p class="section-lede">Most voice tools ship your audio to a cloud and rent it back to you. SpeakType keeps every byte on your Wi-Fi and every keystroke on your machine.</p>
+      <a class="text-link" href="https://github.com/foysalkhan288-rgb/voice-to-pc" target="_blank" rel="noopener">Read the source →</a>
+    </div>
+    <ol class="why-list">
+      <li class="reveal"><span class="idx">01</span><div><h3>Private by construction</h3><p>Pinned TLS between phone and PC, tokens encrypted at rest, and zero transcript history on either side.</p></div></li>
+      <li class="reveal"><span class="idx">02</span><div><h3>On-phone recognition</h3><p>The phone’s own speech service transcribes, with offline language packs when available. Audio never leaves the phone; only text crosses the Wi-Fi.</p></div></li>
+      <li class="reveal"><span class="idx">03</span><div><h3>Types, never pastes</h3><p>Unicode keystrokes into the focused window. No clipboard, no focus steal, no double-typing — and it refuses secure desktops.</p></div></li>
+      <li class="reveal"><span class="idx">04</span><div><h3>Free as in freedom</h3><p>MIT licensed, no account, no ads, no telemetry. Fork it, audit it, ship it.</p></div></li>
+    </ol>
+  </div>
+</section>
+
+<section id="features" class="section section-tint">
+  <div class="container">
+    <p class="kicker">Features</p>
+    <h2>Everything dictation should be.<br>Nothing it shouldn’t.</h2>
+    <div class="feature-grid">
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/><path d="M9.5 12h1l1-2 1.5 4 1-2h1.5"/></svg></span>
+        <h3>On-device speech recognition</h3>
+        <p>The phone’s built-in speech service transcribes, preferring offline language packs. Nothing to download on either device.</p>
+        <code>text-only · TLS link</code>
+      </article>
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20v.01M20 20v.01"/></svg></span>
+        <h3>Pair once, pinned forever</h3>
+        <p>A QR bootstrap with a 180-second code. The phone pins the PC’s certificate fingerprint and keeps the pairing across restarts.</p>
+        <code>TLS 1.2+ · AES-GCM token</code>
+      </article>
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></span>
+        <h3>Types, never pastes</h3>
+        <p>Real Unicode keystrokes with an optional typing delay. Your clipboard and your focus are never touched.</p>
+        <code>SendInput · dedup ids</code>
+      </article>
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg></span>
+        <h3>Live preview, type once</h3>
+        <p>Partials appear on the PC dashboard while you speak. Only the finished transcript is typed — once, with retry-safe delivery.</p>
+        <code>preview ≠ keyboard</code>
+      </article>
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19M12 2.5c2.8 2.6 4.2 5.8 4.2 9.5s-1.4 6.9-4.2 9.5c-2.8-2.6-4.2-5.8-4.2-9.5s1.4-6.9 4.2-9.5z"/></svg></span>
+        <h3>Bangla · Banglish · English</h3>
+        <p>Three output formats, switched from the phone and applied on the PC — Bengali script, phonetic Banglish, or English.</p>
+        <code>textnorm transforms</code>
+      </article>
+      <article class="card reveal">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11v.5a6.5 6.5 0 0 0 13 0V11"/><path d="M12 18v3.5"/><path d="M8.5 21.5h7"/></svg></span>
+        <h3>Hold-to-talk &amp; quick tile</h3>
+        <p>One utterance, push-to-talk, or a single tap from the notification shade or the Quick Settings tile.</p>
+        <code>foreground service</code>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="section">
+  <div class="container">
+    <p class="kicker">How it works</p>
+    <h2>Three steps. Ten seconds.</h2>
+    <ol class="steps">
+      <li class="reveal">
+        <span class="step-idx">1</span>
+        <h3>Pair</h3>
+        <p>Open <strong>Pair phone</strong> on the PC and scan the QR with the app. The code lives for 180 seconds; the pairing lives for good.</p>
+        <code>QR → pinned TLS</code>
+      </li>
+      <li class="reveal">
+        <span class="step-idx">2</span>
+        <h3>Speak</h3>
+        <p>Hold or tap on the phone. Its speech service recognizes your words on-device while the PC dashboard shows a live preview.</p>
+        <code>speech → text</code>
+      </li>
+      <li class="reveal">
+        <span class="step-idx">3</span>
+        <h3>Typed</h3>
+        <p>The PC formats and types the final text into whatever window you focused. Click a field, talk, done.</p>
+        <code>final → keystrokes</code>
+      </li>
+    </ol>
+    <p class="how-note reveal">Router gave your PC a new IP? <strong>Reconnect</strong> rescans the subnet and re-validates the pinned certificate — no fresh QR scan needed.</p>
+  </div>
+</section>
+
+<section id="platforms" class="section section-tint">
+  <div class="container">
+    <p class="kicker">Platforms</p>
+    <h2>Pick your pair.</h2>
+    <div class="platform-grid">
+      <article class="card platform reveal">
+        <div class="platform-top">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+          <span class="chip">v1.1.0</span>
+        </div>
+        <h3>Windows</h3>
+        <p>Windows 10/11 · tray app · types into any focused window. One firewall prompt, optional autostart.</p>
+        <a class="btn btn-primary" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/v1.1.0/VoiceToPC.exe" target="_blank" rel="noopener">Download .exe</a>
+        <small>Unsigned build — SmartScreen may warn. Latest published Windows installer.</small>
+      </article>
+      <article class="card platform reveal">
+        <div class="platform-top">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></span>
+          <span class="chip">v1.7.0</span>
+        </div>
+        <h3>Android</h3>
+        <p>Android 8.0+ · uses the phone’s speech service, offline packs supported. Updates arrive over Wi-Fi, verified by SHA-256.</p>
+        <a class="btn btn-primary" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/latest/app-release.apk" target="_blank" rel="noopener">Get the APK</a>
+        <small>Fixed signing key — updates install in place, pairing survives.</small>
+      </article>
+      <article class="card platform reveal">
+        <div class="platform-top">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5c1-2 3-3 5-3 3 0 5 2.5 5 5.5 0 4-3 8.5-5 8.5-1 0-1.5-.5-2.5-.5s-1.5.5-2.5.5c-2 0-5-4.5-5-8.5 0-3 2-5.5 5-5.5 2 0 4 1 5 3z" transform="scale(.86) translate(2 1)"/><path d="M12 6.5c0-2 1-3.5 3-4"/></svg></span>
+          <span class="chip chip-amber">planned</span>
+        </div>
+        <h3>macOS</h3>
+        <p>On the roadmap. The protocol and the Windows app are open source — watch the repo or help build it.</p>
+        <a class="btn btn-ghost" href="https://github.com/foysalkhan288-rgb/voice-to-pc" target="_blank" rel="noopener">Watch the repo</a>
+        <small>Star the project to follow progress.</small>
+      </article>
+    </div>
+    <div class="checksums reveal">
+      <div>
+        <h3>Verify your download</h3>
+        <p>Every Android release ships <code>SHA256SUMS.txt</code> next to the APKs. Compare before you install.</p>
+      </div>
+      <a class="btn btn-ghost" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/tag/latest" target="_blank" rel="noopener">Get checksums</a>
+    </div>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="container faq-wrap">
+    <p class="kicker">FAQ</p>
+    <h2>Questions, answered.</h2>
+    <div class="faq">
+      <div class="faq-item">
+        <button aria-expanded="false"><span>Does my audio ever leave the local network?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>No. Audio never leaves the phone — recognition runs on the phone itself. Only text travels to your PC over pinned TLS on your Wi-Fi. No cloud relay, no account, no telemetry.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>Does my phone need Google apps or speech services?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>The phone uses its built-in speech recognition service — Google on most phones, with optional offline language packs. Any Android 8.0+ phone with a recognition service works. The PC needs no speech software and no model downloads.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>Which languages are supported?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>Bangla in Bengali script, Banglish (phonetic Latin spellings), and English. You pick the output format on the phone; the PC applies it to every transcript.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>What if my PC gets a new IP address?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>Tap Reconnect. The app rescans your subnet and re-validates the pinned certificate, so a router-assigned IP change doesn’t force a new QR scan. A changed certificate does — that’s the pinning doing its job.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>Why did nothing get typed?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>Click the target text field first. SpeakType refuses to type on secure desktops (sign-in, UAC), and elevated apps can block input from a non-elevated app. A small typing delay in Settings helps apps that drop fast input.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>How do updates reach my phone?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>The PC serves the newest complete APK it can find. The phone compares SHA-256 hashes and offers the update only when the files differ; you confirm the system install dialog.</p></div>
+      </div>
+      <div class="faq-item">
+        <button aria-expanded="false"><span>Is it really free? What’s the catch?</span><span class="faq-x" aria-hidden="true">+</span></button>
+        <div class="faq-panel"><p>MIT licensed, no account, no ads, no telemetry. No model downloads either — your phone’s built-in speech service does the recognition. Contributions are welcome.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="download" class="section download-section">
+  <div class="container">
+    <div class="download-card reveal">
+      <h2>Ready when you are.</h2>
+      <p>Pair once. Speak. Watch your words land in the focused window.</p>
+      <div class="cta-row center">
+        <a class="btn btn-primary" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/v1.1.0/VoiceToPC.exe" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>
+          Download for Windows</a>
+        <a class="btn btn-ghost" href="https://github.com/foysalkhan288-rgb/voice-to-pc/releases/download/latest/app-release.apk" target="_blank" rel="noopener">Get the Android APK</a>
+      </div>
+      <p class="meta">v1.7.0 · MIT licensed · No telemetry · <a class="text-link" href="https://github.com/foysalkhan288-rgb/voice-to-pc" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="24" height="24"><rect width="64" height="64" rx="14" fill="currentColor"/><g fill="none" stroke="var(--site-on-accent)" stroke-width="5" stroke-linecap="round"><rect x="26" y="12" width="12" height="24" rx="6" fill="var(--site-on-accent)" stroke="none"/><path d="M18 30v2a14 14 0 0 0 28 0v-2"/><path d="M32 46v8"/><path d="M24 54h16"/></g></svg>
+        </span>
+        <span class="brand-name">SpeakType</span>
+      </a>
+      <p>Local-first dictation.<br>Your voice, typed.</p>
+    </div>
+    <nav aria-label="Product">
+      <h4>Product</h4>
+      <a href="#features">Features</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+    </nav>
+    <nav aria-label="Resources">
+      <h4>Resources</h4>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">Architecture</a>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/docs/API.md" target="_blank" rel="noopener">API</a>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/docs/TROUBLESHOOTING.md" target="_blank" rel="noopener">Troubleshooting</a>
+      <a href="https://github.com/foysalkhan288-rgb/voice-to-pc/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+    </nav>
+  </div>
+  <div class="container footer-base">
+    <span>MIT © 2026 SpeakType contributors</span>
+    <span>No cloud · No account · No telemetry</span>
+  </div>
+</footer>
+</body>
+</html>

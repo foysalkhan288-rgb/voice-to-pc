@@ -30,3 +30,9 @@ android-app/app/keystore/*.jks
 
 # Release checksums
 SHA256SUMS.txt
+
+# Agent scratch space
+.qoder/
+
+# Landing page build output
+website/dist/
