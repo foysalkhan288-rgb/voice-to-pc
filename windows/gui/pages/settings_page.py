@@ -5,7 +5,23 @@ import tkinter.messagebox as messagebox
 import customtkinter as ctk
 
 from gui.pages.base import BasePage
-from gui.theme import CARD_CORNER_RADIUS, active_palette, apply_theme, get_fonts
+from gui.theme import CARD_GAP, CARD_PADDING, active_palette, apply_theme, get_fonts
+from gui.widgets import (
+    SegmentedControl,
+    caption_label,
+    card_body,
+    card_headline,
+    card_overline,
+    make_card,
+    make_divider,
+    scroll_frame,
+    setting_row,
+    styled_button,
+    styled_entry,
+    styled_slider,
+    styled_switch,
+    value_label,
+)
 from settings import MAX_TYPING_DELAY_MS, MIN_PORT, MAX_PORT, THEMES, AppSettings
 from speaktype import autostart_enabled, set_autostart
 
@@ -18,18 +34,6 @@ class SettingsPage(BasePage):
         colors = active_palette()
         self.fonts = get_fonts()
 
-        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        scroll.pack(fill="both", expand=True)
-
-        card = ctk.CTkFrame(
-            scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1,
-            fg_color=colors["card_bg"], border_color=colors["card_border"],
-        )
-        card.pack(fill="x", padx=4, pady=4)
-
-        self.port_error = ctk.CTkLabel(card, text="", font=self.fonts["small"], text_color=colors["danger"], justify="left", anchor="w")
-        self.port_error.pack(fill="x", padx=16, pady=(12, 0))
-
         self.port_var = ctk.StringVar()
         self.delay_var = ctk.IntVar()
         self.notify_var = ctk.BooleanVar()
@@ -37,84 +41,97 @@ class SettingsPage(BasePage):
         self.autostart_var = ctk.BooleanVar()
         self.theme_var = ctk.StringVar()
 
-        self._row(card, "Port", self._build_port_row, stretch=False)
-        self._row(card, "Typing delay", self._build_delay_row)
-        self._row(card, "Notifications", self._build_notify_row, stretch=False)
-        self._row(card, "Startup", self._build_startup_row, stretch=False)
-        self._row(card, "Firewall", self._build_firewall_row, stretch=False)
-        self._row(card, "Theme", self._build_theme_row, stretch=False)
+        scroll = scroll_frame(self)
+        scroll.pack(fill="both", expand=True)
 
-        buttons = ctk.CTkFrame(card, fg_color="transparent")
-        buttons.pack(fill="x", padx=16, pady=(6, 16))
-        ctk.CTkButton(buttons, text="Save", width=110, command=self.save).pack(side="left")
-        ctk.CTkButton(
-            buttons, text="Restore defaults", width=140, fg_color="transparent", border_width=1,
-            border_color=colors["card_border"], text_color=colors["text"], hover_color=colors["card_bg"],
-            command=self.restore_defaults,
-        ).pack(side="left", padx=8)
-
-        ctk.CTkLabel(
-            card,
-            text="Changing the port restarts SpeakType. Pairing is unaffected — the QR code carries the new port, "
-            "but re-scan if the phone is already paired with the old one.",
-            font=self.fonts["small"], text_color=colors["text_muted"], wraplength=600, justify="left", anchor="w",
-        ).pack(fill="x", padx=16, pady=(0, 16))
-
-    def _row(self, master, label: str, build, stretch: bool = True) -> None:
-        colors = active_palette()
-        row = ctk.CTkFrame(master, fg_color="transparent")
-        row.pack(fill="x", padx=16, pady=6)
-        ctk.CTkLabel(row, text=label, font=self.fonts["body"], text_color=colors["text"], width=140, anchor="w").pack(side="left")
-        # The control has to be created inside the row. Building it against the card and then
-        # packing it here put it in the card's packing order instead, which cascaded every row
-        # across the page and pushed the Save button off the right edge.
-        control = build(row)
-        if stretch:
-            control.pack(side="left", fill="x", expand=True)
-        else:
-            control.pack(side="left")
-
-    def _build_port_row(self, master) -> ctk.CTkBaseClass:
-        entry = ctk.CTkEntry(master, textvariable=self.port_var, width=120)
-        return entry
-
-    def _build_delay_row(self, master) -> ctk.CTkBaseClass:
-        colors = active_palette()
-        holder = ctk.CTkFrame(master, fg_color="transparent")
-        slider = ctk.CTkSlider(
-            holder, from_=0, to=MAX_TYPING_DELAY_MS, number_of_steps=MAX_TYPING_DELAY_MS,
-            variable=self.delay_var, command=self._on_delay_change,
+        # ---- appearance: the phone's Theme card, segmented control and all ----
+        appearance = self._card(scroll, "Appearance", "Theme")
+        card_body(
+            appearance,
+            "Dark keeps the dashboard calm at night. Light matches a bright room. "
+            "The change applies immediately.",
+            wraplength=600,
         )
-        slider.pack(side="left", fill="x", expand=True)
-        self.delay_label = ctk.CTkLabel(holder, text="", font=self.fonts["body"], text_color=colors["text"], width=110, anchor="w")
-        self.delay_label.pack(side="left", padx=(10, 0))
-        return holder
-
-    def _build_notify_row(self, master) -> ctk.CTkBaseClass:
-        return ctk.CTkSwitch(
-            master, text="Show tray notifications when text arrives", variable=self.notify_var,
+        self.theme_tabs = SegmentedControl(
+            appearance, ["Dark", "Light"], selected=0, on_select=self._on_theme_select,
         )
+        self.theme_tabs.pack(fill="x", padx=CARD_PADDING, pady=(12, CARD_PADDING))
 
-    def _build_startup_row(self, master) -> ctk.CTkBaseClass:
-        holder = ctk.CTkFrame(master, fg_color="transparent")
-        ctk.CTkSwitch(holder, text="Start minimized to the tray", variable=self.minimized_var).pack(side="left")
-        ctk.CTkSwitch(holder, text="Start with Windows", variable=self.autostart_var).pack(side="left", padx=(16, 0))
-        return holder
-
-    def _build_firewall_row(self, master) -> ctk.CTkBaseClass:
-        colors = active_palette()
-        holder = ctk.CTkFrame(master, fg_color="transparent")
-        self.firewall_status = ctk.CTkLabel(
-            holder, text="", font=self.fonts["body"], text_color=colors["text_muted"], anchor="w", width=120,
+        # ---- connection ----
+        connection = self._card(scroll, "Connection", "This PC")
+        port_row, _ = setting_row(connection, "Port", "TLS port the phone connects to.")
+        port_row.pack(fill="x", padx=CARD_PADDING)
+        styled_entry(port_row, textvariable=self.port_var, width=110).pack(side="right", padx=(12, 0))
+        self.port_error = caption_label(connection, "", text_color=colors["danger"])
+        self._conn_divider = make_divider(connection)
+        firewall_row, self.firewall_status = setting_row(
+            connection, "Firewall", "Checking…",
         )
-        self.firewall_status.pack(side="left")
-        ctk.CTkButton(
-            holder, text="Allow phone connections", width=190, command=self.app.fix_firewall,
-        ).pack(side="left", padx=(8, 0))
-        return holder
+        firewall_row.pack(fill="x", padx=CARD_PADDING)
+        styled_button(
+            firewall_row, "Allow phone connections", "quiet", height=40,
+            command=self.app.fix_firewall,
+        ).pack(side="right", padx=(12, 0))
+        caption_label(
+            connection,
+            "Changing the port restarts SpeakType. Pairing is unaffected — the QR code carries "
+            "the new port, but re-scan if the phone is already paired with the old one.",
+            wraplength=600,
+        ).pack(fill="x", padx=CARD_PADDING, pady=(0, CARD_PADDING))
 
-    def _build_theme_row(self, master) -> ctk.CTkBaseClass:
-        return ctk.CTkOptionMenu(master, variable=self.theme_var, values=list(THEMES), width=140)
+        # ---- output ----
+        output = self._card(scroll, "Output", "Typing")
+        delay_row, _ = setting_row(output, "Typing delay", "Pause between characters for apps that drop fast input.")
+        delay_row.pack(fill="x", padx=CARD_PADDING)
+        delay_holder = ctk.CTkFrame(delay_row, fg_color="transparent")
+        delay_holder.pack(side="right", padx=(12, 0))
+        styled_slider(
+            delay_holder, from_=0, to=MAX_TYPING_DELAY_MS, number_of_steps=MAX_TYPING_DELAY_MS,
+            variable=self.delay_var, command=self._on_delay_change, width=220,
+        ).pack(side="left")
+        self.delay_label = value_label(delay_holder, "", width=70, anchor="e")
+        self.delay_label.pack(side="left", padx=(12, 0))
+        ctk.CTkFrame(output, height=1, fg_color="transparent").pack(fill="x", pady=(0, CARD_PADDING - 14))
+
+        # ---- startup and notifications ----
+        startup = self._card(scroll, "Startup", "Windows")
+        minimized_row, _ = setting_row(startup, "Start minimized", "Open in the tray instead of showing the window.")
+        minimized_row.pack(fill="x", padx=CARD_PADDING)
+        styled_switch(minimized_row, variable=self.minimized_var).pack(side="right", padx=(12, 0))
+        make_divider(startup)
+        autostart_row, _ = setting_row(startup, "Start with Windows", "Launch SpeakType automatically at sign-in.")
+        autostart_row.pack(fill="x", padx=CARD_PADDING)
+        styled_switch(autostart_row, variable=self.autostart_var).pack(side="right", padx=(12, 0))
+        make_divider(startup)
+        notify_row, _ = setting_row(startup, "Notifications", "Show a tray toast when text arrives.")
+        notify_row.pack(fill="x", padx=CARD_PADDING)
+        styled_switch(notify_row, variable=self.notify_var).pack(side="right", padx=(12, 0))
+        ctk.CTkFrame(startup, height=1, fg_color="transparent").pack(fill="x", pady=(0, CARD_PADDING - 14))
+
+        # ---- save ----
+        buttons = ctk.CTkFrame(scroll, fg_color="transparent")
+        buttons.pack(fill="x", pady=(CARD_GAP, 4))
+        styled_button(buttons, "Save", "primary", width=120, command=self.save).pack(side="left")
+        styled_button(
+            buttons, "Restore defaults", "quiet", width=150, command=self.restore_defaults,
+        ).pack(side="left", padx=(10, 0))
+
+    def _card(self, master, overline: str, headline: str) -> ctk.CTkFrame:
+        card = make_card(master)
+        card.pack(fill="x", pady=(0, CARD_GAP))
+        card_overline(card, overline)
+        card_headline(card, headline)
+        return card
+
+    # ---- theme ------------------------------------------------------------------------------
+
+    def _on_theme_select(self, index: int) -> None:
+        theme = THEMES[index] if index < len(THEMES) else "dark"
+        self.theme_var.set(theme)
+        # Rebuilding destroys this page, so let the click callback finish first.
+        self.app.root.after(10, lambda: self.app.set_theme(theme))
+
+    # ---- delay ------------------------------------------------------------------------------
 
     def _on_delay_change(self, value: float) -> None:
         self.delay_var.set(int(float(value)))
@@ -123,6 +140,8 @@ class SettingsPage(BasePage):
     @staticmethod
     def _delay_text(delay_ms: int) -> str:
         return "instant" if delay_ms == 0 else f"{delay_ms} ms"
+
+    # ---- lifecycle ----------------------------------------------------------------------------
 
     def on_show(self) -> None:
         settings = self.app.settings
@@ -133,7 +152,8 @@ class SettingsPage(BasePage):
         self.minimized_var.set(settings.start_minimized)
         self.autostart_var.set(autostart_enabled())
         self.theme_var.set(settings.theme)
-        self.port_error.configure(text="")
+        self.theme_tabs.select(THEMES.index(settings.theme) if settings.theme in THEMES else 0)
+        self._set_port_error("")
         self._render_firewall()
 
     def tick(self) -> None:
@@ -159,19 +179,28 @@ class SettingsPage(BasePage):
         self.minimized_var.set(defaults.start_minimized)
         self.autostart_var.set(autostart_enabled())
         self.theme_var.set(defaults.theme)
-        self.port_error.configure(text="")
+        self.theme_tabs.select(THEMES.index(defaults.theme) if defaults.theme in THEMES else 0)
+        self._set_port_error("")
+
+    def _set_port_error(self, text: str) -> None:
+        """Show the validation line only when there is something to say."""
+        self.port_error.configure(text=text)
+        if text:
+            self.port_error.pack(fill="x", padx=CARD_PADDING, before=self._conn_divider)
+        else:
+            self.port_error.pack_forget()
 
     def _validated_port(self) -> int | None:
         raw = self.port_var.get().strip()
         try:
             port = int(raw)
         except ValueError:
-            self.port_error.configure(text=f"Port must be a number between {MIN_PORT} and {MAX_PORT}.")
+            self._set_port_error(f"Port must be a number between {MIN_PORT} and {MAX_PORT}.")
             return None
         if not MIN_PORT <= port <= MAX_PORT:
-            self.port_error.configure(text=f"Port must be between {MIN_PORT} and {MAX_PORT}.")
+            self._set_port_error(f"Port must be between {MIN_PORT} and {MAX_PORT}.")
             return None
-        self.port_error.configure(text="")
+        self._set_port_error("")
         return port
 
     def save(self) -> None:
@@ -190,20 +219,22 @@ class SettingsPage(BasePage):
         settings.theme = self.theme_var.get()
         settings.save()
 
-        set_autostart(settings.start_with_windows)
-        apply_theme(settings.theme)
-        if settings.theme != previous_theme:
-            self.app.toast("Theme saved — it repaints fully the next time SpeakType starts")
-        else:
-            self.app.toast("Settings saved")
-
-        for page in self.app.pages.values():
-            page.on_settings_changed()
+        try:
+            set_autostart(settings.start_with_windows)
+        except Exception:
+            pass
 
         if port != previous_port:
-            if not messagebox.askyesno(
+            if messagebox.askyesno(
                 "SpeakType", "The port changed. Restart SpeakType now to listen on the new port?"
             ):
-                return
-            self.app.restart_server()
-            self.app.toast("Restarted on the new port")
+                self.app.restart_server()
+                self.app.toast("Restarted on the new port")
+
+        if settings.theme != previous_theme:
+            # The segmented control normally applies live; this covers Restore defaults + Save.
+            apply_theme(settings.theme)
+            self.app.rebuild_ui()
+        self.app.toast("Settings saved")
+        for page in self.app.pages.values():
+            page.on_settings_changed()

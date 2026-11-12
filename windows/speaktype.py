@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from PIL import Image
+import textnorm
 from settings import AppSettings, app_dir
 
 
@@ -213,19 +214,51 @@ def ensure_certificate(app_dir_path: Path | None = None) -> tuple[str, str, str]
     )
 
 
+_LAN_RANKS = (
+    (ipaddress.ip_network("192.168.0.0/16"), 0),
+    (ipaddress.ip_network("10.0.0.0/8"), 1),
+    (ipaddress.ip_network("172.16.0.0/12"), 2),
+)
+
+
+def _lan_candidate(address: str) -> tuple[int, str] | None:
+    """Rank an address the phone can reach; VPN (100.64/10), link-local and loopback are not."""
+    try:
+        parsed = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return None
+    if parsed.version != 4 or parsed.is_loopback or parsed.is_link_local:
+        return None
+    for network, rank in _LAN_RANKS:
+        if parsed in network:
+            return rank, str(parsed)
+    return None
+
+
 def local_ipv4_address() -> str:
-    """Discover the address Windows would use on the LAN without sending data."""
+    """Discover the LAN address the phone can reach.
+
+    While a VPN is connected the default route points at its adapter and yields a
+    shared 100.64.0.0/10 address, which the phone refuses; fall back to the host's
+    registered private IPv4 addresses, preferring ordinary home LAN ranges.
+    """
+    candidates: list[str] = []
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("192.0.2.1", 9))
-        address = sock.getsockname()[0]
-        if address and not address.startswith("127."):
-            return address
+        candidates.append(sock.getsockname()[0])
     except OSError:
         pass
     finally:
         sock.close()
-    return "127.0.0.1"
+    try:
+        candidates.extend(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    ranked = [entry for entry in (_lan_candidate(value) for value in candidates) if entry]
+    if not ranked:
+        return "127.0.0.1"
+    return min(ranked, key=lambda entry: entry[0])[1]
 
 
 def client_is_private(address: str) -> bool:
@@ -478,6 +511,16 @@ class AppState:
         self.preview_updated = 0.0
         self._release_source: tuple[str, int, int] | None = None
         self.events: list[str] = []
+        self._last_probe: tuple[str, float] = ("", 0.0)
+
+    def note_probe(self, address: str) -> None:
+        """Record that a device reached this PC; proves the phone's path through the network."""
+        now = time.monotonic()
+        with self.lock:
+            if address == self._last_probe[0] and now - self._last_probe[1] < 60:
+                return
+            self._last_probe = (address, now)
+        self.status(f"{address} can reach this PC")
 
     @property
     def delivered_path(self) -> Path:
@@ -659,6 +702,7 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self._reply(403, {"ok": False, "error": "local_network_only"})
             return
         if self.path == "/v1/health":
+            self.state.note_probe(self.client_address[0])
             with self.state.lock:
                 paired = bool(self.state.session_token)
             self._reply(200, {"ok": True, "paired": paired, "hostname": DEVICE_NAME})
@@ -712,10 +756,15 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             self._reply(401, {"ok": False, "error": "not_paired"})
             return
         text = payload.get("text")
-        if not isinstance(text, str) or len(text) > MAX_TEXT:
+        output = payload.get("output", "native")
+        if (
+            not isinstance(text, str)
+            or len(text) > MAX_TEXT
+            or output not in ("native", "roman", "english")
+        ):
             self._reply(400, {"ok": False, "error": "invalid_text"})
             return
-        self.state.set_preview(text.strip())
+        self.state.set_preview(textnorm.transform(text.strip(), output))
         self._reply(200, {"ok": True})
 
     def _pair(self, payload: dict) -> None:
@@ -727,29 +776,37 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
                 and time.monotonic() < self.state.bootstrap_expires
                 and hmac.compare_digest(code, self.state.bootstrap_code)
             )
-            if not valid:
-                self._reply(401, {"ok": False, "error": "pair_code_expired"})
-                return
-            token = secrets.token_urlsafe(32)
-            self.state.bootstrap_code = None
-            self.state.bootstrap_expires = 0.0
-            self.state.session_token = token
-            save_session_token(token, self.state.app_dir)
+            if valid:
+                token = secrets.token_urlsafe(32)
+                self.state.bootstrap_code = None
+                self.state.bootstrap_expires = 0.0
+                self.state.session_token = token
+                save_session_token(token, self.state.app_dir)
+        if not valid:
+            self.state.status(
+                f"Pairing failed from {self.client_address[0]} — the QR code expired "
+                "or was already used. Press “New QR code” and scan again."
+            )
+            self._reply(401, {"ok": False, "error": "pair_code_expired"})
+            return
         self.state.status("Phone paired successfully")
         self._reply(200, {"ok": True, "session_token": token, "hostname": DEVICE_NAME})
 
     def _send_text(self, payload: dict) -> None:
         message_id = payload.get("id")
         text = payload.get("text")
+        output = payload.get("output", "native")
         if (
             not isinstance(message_id, str)
             or len(message_id) > 80
             or not isinstance(text, str)
             or not text.strip()
             or len(text) > MAX_TEXT
+            or output not in ("native", "roman", "english")
         ):
             self._reply(400, {"ok": False, "error": "invalid_text"})
             return
+        text = textnorm.transform(text, output)
 
         token = self.headers.get("Authorization", "")
         if not token.startswith("Bearer "):
@@ -777,7 +834,10 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             safe_text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-            safe_text = "".join(ch for ch in safe_text if ch >= " " or ch == "\u00a0")
+            safe_text = "".join(
+                ch for ch in safe_text
+                if (ch >= " " or ch == "\u00a0") and not 0xD800 <= ord(ch) <= 0xDFFF
+            )
             if not safe_text:
                 self._reply(400, {"ok": False, "error": "empty_text"})
                 return
@@ -792,20 +852,22 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
         delay_ms = getattr(self.state.settings, "typing_delay_ms", 0) if self.state.settings else 0
         try:
             inserted = type_unicode_text(safe_text, delay_ms)
-        except (OSError, ctypes.ArgumentError):
+        except Exception:
             with self.state.lock:
                 self.state.forget_delivery(message_id)
             self._reply(500, {"ok": False, "error": "input_failed"})
             return
 
-        uncertain = False
+        if inserted == 0:
+            with self.state.lock:
+                self.state.forget_delivery(message_id)
+            self._reply(500, {"ok": False, "error": "input_failed"})
+            self.state.status("Text input failed — nothing was typed")
+            return
+        uncertain = inserted != expected_events
         with self.state.lock:
-            if inserted != expected_events:
-                uncertain = inserted > 0
-                if uncertain:
-                    self.state.finish_delivery(message_id, "uncertain")
-                else:
-                    self.state.forget_delivery(message_id)
+            if uncertain:
+                self.state.finish_delivery(message_id, "uncertain")
             else:
                 self.state.finish_delivery(message_id, "done")
 

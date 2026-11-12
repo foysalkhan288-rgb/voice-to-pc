@@ -5,7 +5,16 @@ import tkinter.messagebox as messagebox
 import customtkinter as ctk
 
 from gui.pages.base import BasePage
-from gui.theme import CARD_CORNER_RADIUS, active_palette, get_fonts
+from gui.theme import CARD_GAP, CARD_PADDING, active_palette, get_fonts
+from gui.widgets import (
+    card_body,
+    card_headline,
+    card_overline,
+    make_card,
+    make_panel,
+    scroll_frame,
+    styled_button,
+)
 from speaktype import APP_DIR, MAX_TEXT
 
 
@@ -15,70 +24,72 @@ class SecurityPage(BasePage):
     def __init__(self, master, app) -> None:
         super().__init__(master, app)
         colors = active_palette()
-        FONTS = get_fonts()
+        self.fonts = get_fonts()
 
-        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll = scroll_frame(self)
         scroll.pack(fill="both", expand=True)
 
-        info = ctk.CTkFrame(
-            scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1,
-            fg_color=colors["card_bg"], border_color=colors["card_border"],
-        )
-        info.pack(fill="x", padx=4, pady=4)
-        ctk.CTkLabel(
+        # ---- privacy ----
+        info = make_card(scroll)
+        info.pack(fill="x", pady=(2, CARD_GAP))
+        card_overline(info, "Privacy")
+        card_headline(info, "Local by design")
+        card_body(
             info,
-            text="Pairing and transcripts never leave this network. The connection is TLS pinned to this PC's "
+            "Pairing and transcripts never leave this network. The connection is TLS pinned to this PC's "
             "certificate fingerprint, and the pairing token is encrypted with Windows DPAPI so only your user "
             "account can read it. Nothing is sent to a cloud service.",
-            font=FONTS["body"], text_color=colors["text"], wraplength=620, justify="left",
-        ).pack(fill="x", padx=16, pady=16)
-
-        cert = ctk.CTkFrame(
-            scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1,
-            fg_color=colors["card_bg"], border_color=colors["card_border"],
+            wraplength=640,
         )
-        cert.pack(fill="x", padx=4, pady=4)
-        ctk.CTkLabel(
-            cert, text="Certificate fingerprint", font=FONTS["heading"], text_color=colors["text"], anchor="w",
-        ).pack(fill="x", padx=16, pady=(14, 4))
+        ctk.CTkFrame(info, height=1, fg_color="transparent").pack(fill="x", pady=(0, CARD_PADDING))
+
+        # ---- certificate ----
+        cert = make_card(scroll)
+        cert.pack(fill="x", pady=(0, CARD_GAP))
+        card_overline(cert, "Security")
+        card_headline(cert, "Certificate fingerprint")
+        panel = make_panel(cert)
+        panel.pack(fill="x", padx=CARD_PADDING, pady=(10, 0))
         self.fingerprint_label = ctk.CTkLabel(
-            cert, text="", font=FONTS["mono_small"], text_color=colors["text"],
-            wraplength=600, justify="left", anchor="w",
+            panel, text="", font=self.fonts["mono_small"], text_color=colors["text"],
+            wraplength=580, justify="left", anchor="w",
         )
-        self.fingerprint_label.pack(fill="x", padx=16, pady=(0, 8))
-        ctk.CTkLabel(
+        self.fingerprint_label.pack(fill="x", padx=14, pady=12)
+        card_body(
             cert,
-            text="Replace the certificate only if you suspect it leaked. The phone must be paired again afterwards.",
-            font=FONTS["small"], text_color=colors["text_muted"], wraplength=600, justify="left", anchor="w",
-        ).pack(fill="x", padx=16, pady=(0, 12))
-
-        buttons = ctk.CTkFrame(scroll, fg_color="transparent")
-        buttons.pack(fill="x", padx=4, pady=(0, 8))
-        ctk.CTkButton(
-            buttons, text="Replace certificate", width=160,
-            fg_color=colors["danger"], hover_color="#c94b4b", command=self.replace_certificate,
-        ).pack(side="left")
-        ctk.CTkButton(buttons, text="Unpair phone", width=140, command=self.unpair).pack(side="left", padx=8)
-        ctk.CTkButton(buttons, text="Open data folder", width=160, command=self.app.service.open_data_folder).pack(side="left")
-
-        storage = ctk.CTkFrame(
-            scroll, corner_radius=CARD_CORNER_RADIUS, border_width=1,
-            fg_color=colors["card_bg"], border_color=colors["card_border"],
+            "Replace the certificate only if you suspect it leaked. The phone must be paired again afterwards.",
+            wraplength=620,
         )
-        storage.pack(fill="x", padx=4, pady=(0, 8))
+        cert_buttons = ctk.CTkFrame(cert, fg_color="transparent")
+        cert_buttons.pack(fill="x", padx=CARD_PADDING, pady=(12, CARD_PADDING))
+        styled_button(
+            cert_buttons, "Replace certificate", "danger", command=self.replace_certificate,
+        ).pack(side="left")
+        styled_button(
+            cert_buttons, "Unpair phone", "quiet", command=self.unpair,
+        ).pack(side="left", padx=(10, 0))
+        styled_button(
+            cert_buttons, "Open data folder", "quiet", command=self.app.service.open_data_folder,
+        ).pack(side="left", padx=(10, 0))
+
+        # ---- storage ----
+        storage = make_card(scroll)
+        storage.pack(fill="x", pady=(0, 4))
+        card_overline(storage, "Storage")
+        card_headline(storage, "Data folder")
+        path_panel = make_panel(storage)
+        path_panel.pack(fill="x", padx=CARD_PADDING, pady=(10, 0))
         ctk.CTkLabel(
-            storage, text="Storage", font=FONTS["heading"], text_color=colors["text"], anchor="w",
-        ).pack(fill="x", padx=16, pady=(14, 4))
-        ctk.CTkLabel(
-            storage, text=str(APP_DIR), font=FONTS["mono_small"], text_color=colors["text_muted"],
-            wraplength=600, justify="left", anchor="w",
-        ).pack(fill="x", padx=16, pady=(0, 4))
-        ctk.CTkLabel(
+            path_panel, text=str(APP_DIR), font=self.fonts["mono_small"], text_color=colors["text_muted"],
+            wraplength=580, justify="left", anchor="w",
+        ).pack(fill="x", padx=14, pady=12)
+        card_body(
             storage,
-            text=f"Settings file, certificate, pairing token, and delivery ledger live here. "
+            f"Settings file, certificate, pairing token, and delivery ledger live here. "
             f"One transcript can be up to {MAX_TEXT:,} characters. Transcripts are never stored after they are typed.",
-            font=FONTS["small"], text_color=colors["text_muted"], wraplength=600, justify="left", anchor="w",
-        ).pack(fill="x", padx=16, pady=(0, 16))
+            wraplength=640,
+        )
+        ctk.CTkFrame(storage, height=1, fg_color="transparent").pack(fill="x", pady=(0, CARD_PADDING))
 
     def on_show(self) -> None:
         self.refresh()

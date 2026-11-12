@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageTk
 from gui.pages import DashboardPage, PairingPage, SecurityPage, SettingsPage
 from gui.pages.base import BasePage
 from gui.theme import (
+    GUTTER,
     SIDEBAR_WIDTH,
     WINDOW_MIN_SIZE,
     WINDOW_SIZE,
@@ -17,6 +18,7 @@ from gui.theme import (
     apply_theme,
     get_fonts,
 )
+from gui.widgets import Dot, StatusPill, overline_label
 from settings import AppSettings
 from speaktype import (
     APP_DIR,
@@ -30,7 +32,7 @@ from speaktype import (
     set_autostart,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 
 NAV_ITEMS: tuple[tuple[str, str, type[BasePage]], ...] = (
     ("dashboard", "Dashboard", DashboardPage),
@@ -48,12 +50,13 @@ class VoiceToPcApp:
 
     def __init__(self) -> None:
         self.settings = AppSettings.load()
-        palette = apply_theme(self.settings.theme)
+        apply_theme(self.settings.theme)
         self.service = SpeakTypeService(self.settings)
         self.service.on_event = self._on_service_event
         self.service.notifier = self._notify
         self.service.state.preview_callback = self._on_preview
         self.current_page: BasePage | None = None
+        self._current_name = "dashboard"
         self._status_after_id: str | None = None
 
         self.root = ctk.CTk()
@@ -65,15 +68,10 @@ class VoiceToPcApp:
 
         self.fonts = get_fonts()
 
-        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_columnconfigure(2, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
 
-        self._build_sidebar(palette)
-        self._build_content(palette)
-        self._build_status_bar(palette)
-
-        self.pages = {name: page_class(self.content, self) for name, _, page_class in NAV_ITEMS}
-        self.show_page("dashboard")
+        self._build_chrome()
 
         self.tray = self._create_tray_icon()
         self.tray.run_detached()
@@ -182,68 +180,109 @@ class VoiceToPcApp:
         except Exception:
             pass
 
+    def _build_chrome(self) -> None:
+        palette = active_palette()
+        self._build_sidebar(palette)
+        self._build_content(palette)
+        self._build_status_bar(palette)
+        self.pages = {name: page_class(self.content, self) for name, _, page_class in NAV_ITEMS}
+        self.show_page(self._current_name)
+
+    def rebuild_ui(self) -> None:
+        """Repaint every surface after a theme change without touching service or tray."""
+        for widget in (self.sidebar, self.nav_divider, self.content_shell, self.status_bar):
+            widget.destroy()
+        self.pages = {}
+        self.current_page = None
+        self._build_chrome()
+        self.refresh_status()
+
+    def set_theme(self, theme: str) -> None:
+        """Persist and apply a theme immediately, the way the phone's theme tabs do."""
+        self.settings.theme = theme
+        self.settings.save()
+        apply_theme(theme)
+        self.rebuild_ui()
+        self.toast("Theme saved")
+
     def _build_sidebar(self, palette: dict[str, str]) -> None:
         sidebar = ctk.CTkFrame(self.root, width=SIDEBAR_WIDTH, corner_radius=0, fg_color=palette["sidebar_bg"])
         sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+        self.sidebar = sidebar
+        sidebar.grid_rowconfigure(len(NAV_ITEMS) + 3, weight=1)
         sidebar.grid_propagate(False)
 
+        brand = ctk.CTkFrame(sidebar, fg_color="transparent")
+        brand.grid(row=0, column=0, padx=20, pady=(22, 18), sticky="ew")
+        overline_label(brand, "Voice to PC", color=palette["accent"]).pack(anchor="w")
         ctk.CTkLabel(
-            sidebar, text=APP_NAME, font=self.fonts["title"], text_color=palette["text"], anchor="w",
-        ).grid(row=0, column=0, padx=18, pady=(20, 2), sticky="w")
+            brand, text=APP_NAME, font=self.fonts["brand"], text_color=palette["text"], anchor="w",
+        ).pack(anchor="w", pady=(4, 0))
         ctk.CTkLabel(
-            sidebar, text=DEVICE_NAME, font=self.fonts["small"], text_color=palette["text_muted"], anchor="w",
-        ).grid(row=1, column=0, padx=18, pady=(0, 14), sticky="w")
+            brand, text=DEVICE_NAME, font=self.fonts["caption"], text_color=palette["text_muted"], anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
-        for index, (name, label, _) in enumerate(NAV_ITEMS, start=2):
+        for index, (name, label, _) in enumerate(NAV_ITEMS, start=1):
             button = ctk.CTkButton(
-                sidebar, text=label, anchor="w", height=36, corner_radius=8,
-                fg_color="transparent", hover_color=palette["card_bg"], text_color=palette["text"],
+                sidebar, text=label, anchor="w", height=42, corner_radius=12,
+                border_spacing=14, font=self.fonts["section"],
+                fg_color="transparent", hover_color=palette["subtle"], text_color=palette["text_muted"],
                 command=lambda target=name: self.show_page(target),
             )
             button.grid(row=index, column=0, padx=12, pady=3, sticky="ew")
             self.nav_buttons[name] = button
 
         footer = ctk.CTkFrame(sidebar, fg_color="transparent")
-        footer.grid(row=len(NAV_ITEMS) + 2, column=0, padx=18, pady=(0, 16), sticky="sw")
-        ctk.CTkLabel(footer, text="Status", font=self.fonts["small"], text_color=palette["text_muted"], anchor="w").pack(
-            side="top", anchor="w"
-        )
+        footer.grid(row=len(NAV_ITEMS) + 4, column=0, padx=20, pady=(0, 18), sticky="sw")
+        overline_label(footer, "Status").pack(anchor="w")
         dot_row = ctk.CTkFrame(footer, fg_color="transparent")
-        dot_row.pack(side="top", anchor="w", pady=(2, 0))
-        self.status_dot = ctk.CTkLabel(dot_row, text="●", font=self.fonts["heading"], text_color=palette["danger"])
+        dot_row.pack(anchor="w", pady=(6, 0))
+        self.status_dot = Dot(dot_row, palette["danger"], size=10, bg=palette["sidebar_bg"])
         self.status_dot.pack(side="left")
         self.status_dot_text = ctk.CTkLabel(
-            dot_row, text="Stopped", font=self.fonts["small"], text_color=palette["text_muted"],
+            dot_row, text="Stopped", font=self.fonts["value"], text_color=palette["text"],
         )
-        self.status_dot_text.pack(side="left", padx=(6, 0))
+        self.status_dot_text.pack(side="left", padx=(8, 0))
         ctk.CTkLabel(
-            footer, text=f"v{VERSION}", font=self.fonts["small"], text_color=palette["text_muted"],
-        ).pack(side="top", anchor="w", pady=(4, 0))
+            footer, text=f"v{VERSION}", font=self.fonts["caption"], text_color=palette["text_muted"],
+        ).pack(anchor="w", pady=(6, 0))
+
+        self.nav_divider = ctk.CTkFrame(self.root, width=1, corner_radius=0, fg_color=palette["hairline"])
+        self.nav_divider.grid(row=0, column=1, sticky="ns")
 
     def _build_content(self, palette: dict[str, str]) -> None:
-        content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=palette["bg"])
-        content.grid(row=0, column=1, sticky="nsew")
-        content.grid_rowconfigure(2, weight=1)
-        content.grid_columnconfigure(0, weight=1)
+        shell = ctk.CTkFrame(self.root, corner_radius=0, fg_color=palette["bg"])
+        shell.grid(row=0, column=2, sticky="nsew")
+        self.content_shell = shell
+        shell.grid_rowconfigure(2, weight=1)
+        shell.grid_columnconfigure(0, weight=1)
 
+        header = ctk.CTkFrame(shell, fg_color="transparent")
+        header.grid(row=0, column=0, padx=GUTTER, pady=(20, 0), sticky="ew")
         self.header_title = ctk.CTkLabel(
-            content, text="", font=self.fonts["title"], text_color=palette["text"], anchor="w",
+            header, text="", font=self.fonts["title"], text_color=palette["text"], anchor="w",
         )
-        self.header_title.grid(row=0, column=0, padx=28, pady=(22, 0), sticky="w")
+        self.header_title.pack(side="left")
+        self.header_pill = StatusPill(header, "Stopped", palette["danger"], fg_color=palette["card_bg"])
+        self.header_pill.pack(side="right")
 
-        header_line = ctk.CTkFrame(content, height=1, fg_color=palette["card_border"])
-        header_line.grid(row=1, column=0, padx=28, pady=(12, 0), sticky="ew")
+        header_line = ctk.CTkFrame(shell, height=1, corner_radius=0, fg_color=palette["hairline"])
+        header_line.grid(row=1, column=0, padx=GUTTER, pady=(14, 0), sticky="ew")
 
-        self.content = ctk.CTkFrame(content, fg_color="transparent")
-        self.content.grid(row=2, column=0, padx=20, pady=12, sticky="nsew")
+        self.content = ctk.CTkFrame(shell, fg_color="transparent")
+        self.content.grid(row=2, column=0, padx=(GUTTER, GUTTER - 8), pady=(14, 12), sticky="nsew")
 
     def _build_status_bar(self, palette: dict[str, str]) -> None:
-        bar = ctk.CTkFrame(self.root, height=30, corner_radius=0, fg_color=palette["sidebar_bg"])
-        bar.grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.status_label = ctk.CTkLabel(bar, text="", font=self.fonts["small"], text_color=palette["text_muted"], anchor="w")
-        self.status_label.pack(side="left", padx=18, fill="y")
+        bar = ctk.CTkFrame(self.root, height=34, corner_radius=0, fg_color=palette["sidebar_bg"])
+        bar.grid(row=1, column=0, columnspan=3, sticky="ew")
+        bar.grid_propagate(False)
+        self.status_bar = bar
+        ctk.CTkFrame(bar, height=1, corner_radius=0, fg_color=palette["hairline"]).pack(fill="x")
+        self.status_label = ctk.CTkLabel(
+            bar, text="", font=self.fonts["caption"], text_color=palette["text_muted"], anchor="w",
+        )
+        self.status_label.pack(side="left", padx=GUTTER, fill="y")
 
     def show_page(self, name: str) -> None:
         if name not in self.pages:
@@ -251,14 +290,16 @@ class VoiceToPcApp:
         if self.current_page is not None:
             self.current_page.pack_forget()
         self.current_page = self.pages[name]
+        self._current_name = name
         self.current_page.pack(fill="both", expand=True)
         self.header_title.configure(text=self.current_page.title)
+        palette = active_palette()
         for nav_name, button in self.nav_buttons.items():
-            palette = active_palette()
+            selected = nav_name == name
             button.configure(
-                fg_color=palette["accent"] if nav_name == name else "transparent",
-                text_color="#ffffff" if nav_name == name else palette["text"],
-                hover=nav_name != name,
+                fg_color=palette["accent_soft"] if selected else "transparent",
+                hover_color=palette["accent_soft_pressed"] if selected else palette["subtle"],
+                text_color=palette["accent_pressed"] if selected else palette["text_muted"],
             )
         self.current_page.on_show()
         self.refresh_status()
@@ -266,14 +307,15 @@ class VoiceToPcApp:
     def refresh_status(self) -> None:
         palette = active_palette()
         service = self.service
-        if service.is_running:
-            dot, dot_text = palette["success"], "Running"
+        if service.is_running and service.paired():
+            dot, pill_text = palette["success"], "Connected"
+        elif service.is_running:
+            dot, pill_text = palette["warning"], "Not paired"
         else:
-            dot, dot_text = palette["danger"], "Stopped"
-        if service.is_running and not service.paired():
-            dot = palette["warning"]
-        self.status_dot.configure(text_color=dot)
-        self.status_dot_text.configure(text=dot_text)
+            dot, pill_text = palette["danger"], "Stopped"
+        self.status_dot.set_color(dot)
+        self.status_dot_text.configure(text="Running" if service.is_running else "Stopped")
+        self.header_pill.set_state(pill_text, dot)
 
         if service.is_running:
             state = f"Running on {local_ipv4_address()}:{self.settings.port}  ·  same Wi-Fi only"
