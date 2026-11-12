@@ -36,3 +36,6 @@ SHA256SUMS.txt
 
 # Landing page build output
 website/dist/
+
+# Qoder Sites local descriptor
+*.qoder.site
