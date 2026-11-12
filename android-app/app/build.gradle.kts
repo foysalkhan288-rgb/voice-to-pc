@@ -13,8 +13,8 @@ android {
         applicationId = "com.ashiqe.voicetopc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.2.0"
+        versionCode = 28
+        versionName = "1.7.3"
     }
 
     // One fixed key for every build. Android only replaces an installed app when the signing

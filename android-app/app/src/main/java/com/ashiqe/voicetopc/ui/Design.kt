@@ -17,81 +17,110 @@ import android.widget.TextView
  * Colour tokens shared with the PC dashboard, so the phone and the tray app read as one product.
  * Values are ARGB ints because the whole UI is built programmatically.
  *
- * One accent (deep emerald) carries every action; everything else is a calm neutral so the accent
- * never has to compete with itself.
+ * One accent (emerald) carries every action; everything else is a calm neutral so the accent never
+ * has to compete with itself. The palette is theme-aware: [applyDarkMode] flips every token to its
+ * dark twin, and call sites never branch on the theme themselves.
  */
 object Palette {
-    /** Page background: a barely-tinted off-white, calmer than pure white under a card stack. */
-    val BACKGROUND = 0xFFF5F7F6.toInt()
+    private var dark = false
+
+    /** True while the dark palette is active. Set once, before the UI is built. */
+    val isDark: Boolean get() = dark
+
+    /** Switches every token below to its dark or light value. Call before building any view. */
+    fun applyDarkMode(enabled: Boolean) {
+        dark = enabled
+    }
+
+    private fun pick(light: Int, darkValue: Int): Int = if (dark) darkValue else light
+
+    /** Page background: a barely-tinted off-white in light, a deep green-black in dark. */
+    val BACKGROUND: Int get() = pick(0xFFF5F7F6.toInt(), 0xFF0C1210.toInt())
 
     /** Card surface. */
-    val SURFACE = 0xFFFFFFFF.toInt()
+    val SURFACE: Int get() = pick(0xFFFFFFFF.toInt(), 0xFF151D19.toInt())
 
     /** Alias kept so existing call sites keep compiling. */
-    val CARD = SURFACE
+    val CARD: Int get() = SURFACE
 
     /** Inset surface for panels and pills: a shade below [SURFACE]. */
-    val SURFACE_ALT = 0xFFF0F4F2.toInt()
+    val SURFACE_ALT: Int get() = pick(0xFFF0F4F2.toInt(), 0xFF1B2420.toInt())
 
     /** Structural border for cards, choices and quiet buttons. */
-    val BORDER = 0xFFDCE5E0.toInt()
+    val BORDER: Int get() = pick(0xFFDCE5E0.toInt(), 0xFF2B3732.toInt())
 
     /** 1dp separator line: visible but never louder than the text it separates. */
-    val HAIRLINE = 0xFFE6EDE9.toInt()
+    val HAIRLINE: Int get() = pick(0xFFE6EDE9.toInt(), 0xFF232D28.toInt())
 
-    /** The single accent: deep emerald, ~5.6:1 on white. */
-    val ACCENT = 0xFF1F7A57.toInt()
+    /** The single accent: deep emerald on light, a brighter mint on dark. */
+    val ACCENT: Int get() = pick(0xFF1F7A57.toInt(), 0xFF4FC49A.toInt())
 
     /** Accent under press. */
-    val ACCENT_PRESSED = 0xFF186445.toInt()
+    val ACCENT_PRESSED: Int get() = pick(0xFF186445.toInt(), 0xFF6FDDB4.toInt())
 
     /** Accent wash used for selected/tinted surfaces. */
-    val ACCENT_SOFT = 0xFFE4F0EA.toInt()
+    val ACCENT_SOFT: Int get() = pick(0xFFE4F0EA.toInt(), 0xFF16382B.toInt())
 
     /** Accent wash under press. */
-    val ACCENT_SOFT_PRESSED = 0xFFD5E7DF.toInt()
+    val ACCENT_SOFT_PRESSED: Int get() = pick(0xFFD5E7DF.toInt(), 0xFF1C4536.toInt())
 
     /** Text and glyphs drawn on [ACCENT]. */
-    val ON_ACCENT = 0xFFFFFFFF.toInt()
+    val ON_ACCENT: Int get() = pick(0xFFFFFFFF.toInt(), 0xFF07130D.toInt())
 
-    /** Primary text: near-black green, not pure black, to keep the calm tone. */
-    val TEXT = 0xFF14201B.toInt()
+    /** Primary text: near-black green on light, warm off-white on dark. */
+    val TEXT: Int get() = pick(0xFF14201B.toInt(), 0xFFE7F0EB.toInt())
 
-    /** Secondary text: ~6.4:1 on white. */
-    val MUTED = 0xFF55655E.toInt()
+    /** Secondary text. */
+    val MUTED: Int get() = pick(0xFF55655E.toInt(), 0xFFA2B2AA.toInt())
 
     /** Neutral wash for secondary buttons and status pills. */
-    val SUBTLE = 0xFFEDF3F0.toInt()
+    val SUBTLE: Int get() = pick(0xFFEDF3F0.toInt(), 0xFF1F2A25.toInt())
 
     /** [SUBTLE] under press. */
-    val SUBTLE_PRESSED = 0xFFDEE8E3.toInt()
+    val SUBTLE_PRESSED: Int get() = pick(0xFFDEE8E3.toInt(), 0xFF28352F.toInt())
 
     /** Pressed tint for quiet (bordered, surface-filled) controls. */
-    val QUIET_PRESSED = 0xFFF1F5F3.toInt()
+    val QUIET_PRESSED: Int get() = pick(0xFFF1F5F3.toInt(), 0xFF1D2723.toInt())
 
     /** Positive state: connected / sent. */
-    val SUCCESS = 0xFF1F7A57.toInt()
+    val SUCCESS: Int get() = pick(0xFF1F7A57.toInt(), 0xFF4FC49A.toInt())
 
     /** Caution state: unreachable / retry. */
-    val WARNING = 0xFF8A5D0A.toInt()
+    val WARNING: Int get() = pick(0xFF8A5D0A.toInt(), 0xFFE8BC6A.toInt())
 
     /** Destructive state. */
-    val DANGER = 0xFFB3261E.toInt()
+    val DANGER: Int get() = pick(0xFFB3261E.toInt(), 0xFFFF8A80.toInt())
 
     /** [DANGER] under press. */
-    val DANGER_PRESSED = 0xFF8F1D17.toInt()
+    val DANGER_PRESSED: Int get() = pick(0xFF8F1D17.toInt(), 0xFFFFA79E.toInt())
 
     /** [DANGER] wash for destructive banners. */
-    val DANGER_SOFT = 0xFFFBE9E7.toInt()
+    val DANGER_SOFT: Int get() = pick(0xFFFBE9E7.toInt(), 0xFF3A1B17.toInt())
+
+    /** Text drawn on [DANGER]; the dark palette uses a light red, so it needs dark text. */
+    val ON_DANGER: Int get() = pick(0xFFFFFFFF.toInt(), 0xFF3A0704.toInt())
 
     /** Pure white, for icons and on-accent text. */
-    val WHITE = 0xFFFFFFFF.toInt()
+    val WHITE: Int get() = 0xFFFFFFFF.toInt()
 
     /** Fill of a disabled control. */
-    val DISABLED_FILL = 0xFFEEF2F0.toInt()
+    val DISABLED_FILL: Int get() = pick(0xFFEEF2F0.toInt(), 0xFF1E2623.toInt())
 
     /** Text on [DISABLED_FILL]; disabled text is exempt from contrast minimums. */
-    val DISABLED_TEXT = 0xFF98A6A0.toInt()
+    val DISABLED_TEXT: Int get() = pick(0xFF98A6A0.toInt(), 0xFF6E7C76.toInt())
+
+    /** Thin structural ring around the talk disc. */
+    val RING: Int get() = pick(0xFFFFFFFF.toInt(), 0xFF3E5C50.toInt())
+
+    /** Bloom colour behind and around the talk disc. */
+    val GLOW: Int get() = pick(0xFF1F7A57.toInt(), 0xFF4FC49A.toInt())
+
+    /** Talk-disc gradient, top light to bottom deep. */
+    val DISC_LIGHT: Int get() = pick(0xFF2E9C74.toInt(), 0xFF46CD9E.toInt())
+    val DISC_DARK: Int get() = pick(0xFF14543B.toInt(), 0xFF1C7A5C.toInt())
+
+    /** Drop shadow under the talk disc; tinted on light, neutral on dark. */
+    val DISC_SHADOW: Int get() = pick(0x331F7A57, 0x66000000)
 }
 
 /** Layout metrics in dp. Spacing uses whole [Metric.SPACING_UNIT] steps via [Design.space]. */
@@ -157,8 +186,10 @@ object Design {
     private const val SP_DOT = 10f
     private const val OVERLINE_TRACKING = 0.14f
     private const val LINE_SPACING_EXTRA = 3
-    private const val RIPPLE_COLOR = 0x1F1F7A57
     private const val CHEVRON = "\u203A"
+
+    /** Ripple tint matching the active theme: accent-ink on light, white haze on dark. */
+    val rippleColor: Int get() = if (Palette.isDark) 0x22FFFFFF else 0x1F1F7A57
 
     /** dp value of [value] on this device's density. */
     fun dp(context: Context, value: Int): Int = TypedValue.applyDimension(
@@ -392,7 +423,7 @@ object Design {
         ButtonStyle.PRIMARY -> textColors(Palette.ON_ACCENT, Palette.ON_ACCENT, Palette.DISABLED_TEXT)
         ButtonStyle.SECONDARY -> textColors(Palette.ACCENT, Palette.ACCENT_PRESSED, Palette.DISABLED_TEXT)
         ButtonStyle.QUIET -> textColors(Palette.MUTED, Palette.TEXT, Palette.DISABLED_TEXT)
-        ButtonStyle.DANGER -> textColors(Palette.WHITE, Palette.WHITE, Palette.DISABLED_TEXT)
+        ButtonStyle.DANGER -> textColors(Palette.ON_DANGER, Palette.ON_DANGER, Palette.DISABLED_TEXT)
     }
 
     /** Selected / unselected treatment for the two recognition-source choices. */
@@ -461,7 +492,7 @@ object Design {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(context, Metric.ROW_PADDING), 0, dp(context, Metric.ROW_PADDING))
             background = RippleDrawable(
-                ColorStateList.valueOf(RIPPLE_COLOR),
+                ColorStateList.valueOf(rippleColor),
                 null,
                 fill(context, Palette.SURFACE, Metric.PANEL_RADIUS),
             )

@@ -3,9 +3,18 @@ package com.ashiqe.voicetopc
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.RippleDrawable
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -13,24 +22,27 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
+import androidx.core.view.WindowCompat
 import com.ashiqe.voicetopc.ui.ButtonStyle
 import com.ashiqe.voicetopc.ui.Design
 import com.ashiqe.voicetopc.ui.Metric
 import com.ashiqe.voicetopc.ui.Palette
+import com.ashiqe.voicetopc.ui.SegmentedControl
+import com.ashiqe.voicetopc.ui.TalkButton
 import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONObject
 import java.io.File
@@ -44,8 +56,7 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -59,13 +70,22 @@ import javax.net.ssl.X509TrustManager
 private const val MIC_PERMISSION_REQUEST = 401
 private const val CAMERA_PERMISSION_REQUEST = 402
 private const val NOTIFICATION_PERMISSION_REQUEST = 403
-private const val FINALIZE_TIMEOUT_MS = 10_000L
+/** On-device recognition finalizes quickly; the timeout only guards a stuck recognizer. */
+private const val FINALIZE_TIMEOUT_MS = 15_000L
+private const val SESSION_TIMEOUT_MS = 180_000L
+
+/** Peak 16-bit sample considered speech rather than room noise. */
+private const val MIC_TEST_SPEECH_PEAK = 100
+
 private const val UPDATE_APK_NAME = "speaktype.apk"
 internal const val PREFS_NAME = "speak_type"
 private const val KEY_ALIAS = "speak_type_connection_key"
-private const val KEY_ONLINE_MODE = "online_mode"
 internal const val KEY_OUTPUT_MODE = "output_mode"
-private const val KEY_LANGUAGE_MODE = "language_mode"
+internal const val KEY_LANGUAGE_MODE = "language_mode"
+private const val KEY_TALK_MODE = "talk_mode"
+private const val KEY_THEME = "theme_mode"
+private const val DEFAULT_THEME = "dark"
+private const val STATE_PAGE = "page_index"
 
 data class PcConnection(
     val host: String,
@@ -83,61 +103,78 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var statusView: TextView
     private lateinit var statusLiveDot: TextView
-    private lateinit var privacyView: TextView
     private lateinit var connectionView: TextView
     private lateinit var outputValue: TextView
     private lateinit var languageValue: TextView
-    private lateinit var micButton: Button
-    private lateinit var holdButton: Button
+    private lateinit var talkButton: TalkButton
+    private lateinit var modeTabs: SegmentedControl
+    private lateinit var modeHintView: TextView
+    private lateinit var pageTabs: SegmentedControl
+    private lateinit var homePage: ScrollView
+    private lateinit var settingsPage: ScrollView
+    private lateinit var homeConnectionView: TextView
+    private lateinit var homeConnectionDot: TextView
     private lateinit var pairButton: Button
     private lateinit var reconnectButton: Button
     private lateinit var retryButton: Button
     private lateinit var discardButton: Button
-    private lateinit var onlineButton: Button
-    private lateinit var offlineButton: Button
     private lateinit var statusDot: TextView
     private lateinit var updateButton: Button
     private lateinit var updateView: TextView
+    private lateinit var voiceDiagView: TextView
+    private lateinit var permissionValue: TextView
+    private lateinit var micTestView: TextView
+    private lateinit var micTestButton: Button
 
-    private var recognizer: SpeechRecognizer? = null
+    private var micSession: SpeechSession? = null
     private var listening = false
+    private var lastVoiceError: String? = null
     private var pendingId: String? = null
     private var pendingText: String? = null
     private var pendingUncertain: Boolean = false
-    private var privacyOnline: Boolean? = null
+    private var pendingMicStart = false
+    private var lastMicTest: String? = null
     // ponytail: outputMode stays a 3-string ("native"|"roman"|"english"); upgrade to enum when a 4th mode appears.
     private var outputMode: String = "native"
     private var languageMode: String = "auto"
     private var linkState: String = "unknown" // connected | unreachable | unpaired | unknown
+    private var linkError: String? = null // cert | network
+    // Bumped on every successful pairing so an older in-flight link check cannot overwrite it.
+    private val connectionGeneration = AtomicInteger(0)
     private var availableUpdate: UpdateInfo? = null
     private var githubUpdateUrl: String? = null
     private var updateBusy = false
-    private var holdActive = false
-    // Partial transcripts are previewed on the PC; they are never typed into the focused field.
-    private val previewWorker: ExecutorService = Executors.newSingleThreadExecutor()
-    private val previewLatest = AtomicReference<String?>(null)
-    private val previewScheduled = AtomicBoolean(false)
+    private var holdMode: Boolean = true
+    private var themeMode: String = DEFAULT_THEME
+    private var currentPage: Int = 0
     private val mainHandler = Handler(Looper.getMainLooper())
-    // Hold-to-talk finalizes through stopListening(); this covers a speech service that never answers.
+    // Hold-to-talk finalizes through stop(); this covers a recognizer that never answers.
     private val finalizeTimeout = Runnable {
         if (listening) {
-            stopRecognizer()
-            setStatus("No speech was recognized. Nothing was sent.")
+            micSession?.cancel()
+            stopMicSession()
+            setStatus("Speech recognition timed out. Nothing was sent.")
         }
+    }
+    // Backstop for a recognizer that goes silent without delivering results.
+    private val sessionTimeout = Runnable {
+        if (listening) finalizeListening()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Dark is the default look; applying it before the activity attaches avoids a light flash.
+        themeMode = preferences.getString(KEY_THEME, DEFAULT_THEME) ?: DEFAULT_THEME
+        AppCompatDelegate.setDefaultNightMode(nightModeFor(themeMode))
         super.onCreate(savedInstanceState)
-        privacyOnline = if (preferences.contains(KEY_ONLINE_MODE)) {
-            preferences.getBoolean(KEY_ONLINE_MODE, true)
-        } else null
+        Palette.applyDarkMode(isNightMode())
+        applyWindowTheme()
         outputMode = preferences.getString(KEY_OUTPUT_MODE, "native") ?: "native"
         languageMode = preferences.getString(KEY_LANGUAGE_MODE, "auto") ?: "auto"
+        holdMode = preferences.getString(KEY_TALK_MODE, "hold") != "tap"
         buildUi()
         refreshUi()
-        if (privacyOnline == null) {
-            setStatus("Choose Online or Offline speech recognition to get started.")
-        }
+        // A theme switch recreates the activity; keep the user on the page they were reading.
+        showPage(savedInstanceState?.getInt(STATE_PAGE, 0) ?: 0)
         createUpdateNotificationChannel()
         checkLink()
         requestNotificationPermission()
@@ -145,6 +182,44 @@ class MainActivity : AppCompatActivity() {
         autoCheckForUpdate()
         // Keep the shade control available: dictate from any app without returning here.
         DictationNotifications.ensureReady(this)
+    }
+
+    private fun nightModeFor(mode: String): Int = when (mode) {
+        "light" -> AppCompatDelegate.MODE_NIGHT_NO
+        "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        else -> AppCompatDelegate.MODE_NIGHT_YES
+    }
+
+    private fun isNightMode(): Boolean =
+        resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    /** Window chrome follows the palette, so the status and nav bars blend into the page. */
+    private fun applyWindowTheme() {
+        val dark = Palette.isDark
+        window.setBackgroundDrawable(ColorDrawable(Palette.BACKGROUND))
+        @Suppress("DEPRECATION")
+        window.statusBarColor = Palette.BACKGROUND
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = Palette.BACKGROUND
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+
+    /**
+     * Persists the choice and lets AppCompat recreate the activity, which rebuilds every view from
+     * the new palette. Selecting the already-active mode is a no-op.
+     */
+    private fun chooseTheme(mode: String) {
+        if (mode == themeMode) return
+        themeMode = mode
+        preferences.edit().putString(KEY_THEME, mode).apply()
+        AppCompatDelegate.setDefaultNightMode(nightModeFor(mode))
     }
 
     /**
@@ -159,7 +234,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Permission and engine choices can change in the phone settings while we are away.
+        if (::permissionValue.isInitialized) refreshUi()
         checkLink()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_PAGE, currentPage)
     }
 
     private fun createUpdateNotificationChannel() {
@@ -189,33 +271,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLink() {
+        val generation = connectionGeneration.get()
         val connection = SecureConnectionStore(this).load()
         if (connection == null) {
             linkState = "unpaired"
+            linkError = null
             runOnUiThread { refreshUi(); autoCheckForUpdate() }
             return
         }
         worker.execute {
             try {
                 val health = getJson(connection.host, connection.port, connection.fingerprint, "/v1/health", connection.sessionToken)
+                if (generation != connectionGeneration.get()) return@execute
                 if (health.optBoolean("ok")) {
                     val hostname = health.optString("hostname")
                     if (hostname.isNotEmpty() && hostname != connection.hostname) {
                         SecureConnectionStore(this).save(connection.copy(hostname = hostname))
                     }
                     linkState = "connected"
+                    linkError = null
                 } else {
                     linkState = "unreachable"
+                    linkError = "network"
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                if (generation != connectionGeneration.get()) return@execute
                 // Same-Wi-Fi sweep so a changed IP no longer needs a new QR scan.
-                linkState = if (discoverPc(connection)) "connected" else "unreachable"
+                val recovered = discoverPc(connection, generation)
+                if (generation != connectionGeneration.get()) return@execute
+                linkState = if (recovered) "connected" else "unreachable"
+                linkError = when {
+                    recovered -> null
+                    isCertificateError(error) -> "cert"
+                    else -> "network"
+                }
             }
             runOnUiThread { refreshUi(); autoCheckForUpdate() }
         }
     }
 
-    private fun discoverPc(connection: PcConnection): Boolean {
+    private fun isCertificateError(error: Exception): Boolean {
+        val text = (error.message ?: "") + " " + (error.cause?.message ?: "")
+        return text.contains("fingerprint", ignoreCase = true) || text.contains("certificate", ignoreCase = true)
+    }
+
+    private fun discoverPc(connection: PcConnection, generation: Int): Boolean {
         // ponytail: single /24 sweep only; upgrade to mDNS when multiple subnets matter.
         val subnets = linkedSetOf<String>()
         try {
@@ -242,7 +342,9 @@ class MainActivity : AppCompatActivity() {
                     futures.add(pool.submit<Boolean> {
                         try {
                             val health = getJson(host, connection.port, connection.fingerprint, "/v1/health", connection.sessionToken)
-                            if (health.optBoolean("ok") && health.optString("hostname") == connection.hostname) {
+                            // The pinned certificate already proves this is the paired PC; a
+                            // renamed PC must not block rediscovery after an IP change.
+                            if (health.optBoolean("ok") && generation == connectionGeneration.get()) {
                                 SecureConnectionStore(this).save(connection.copy(host = host))
                                 true
                             } else false
@@ -263,65 +365,126 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            setBackgroundColor(Palette.BACKGROUND)
-        }
-        val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Palette.BACKGROUND)
-            setPadding(dp(Metric.GUTTER), space(3), dp(Metric.GUTTER), space(6))
-        }
-        scroll.addView(outer)
+        val root = FrameLayout(this).apply { setBackgroundColor(Palette.BACKGROUND) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            scroll.setOnApplyWindowInsetsListener { view, insets ->
+            root.setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
                 insets
             }
         }
 
-        // ---- brand header -----------------------------------------------------------------
-        outer.addView(Design.overline(this, "VOICE TO PC", Palette.ACCENT), matchWrap())
-        outer.addView(Design.title(this, "Speak. See it typed."), matchWrap().apply { topMargin = space(1) })
-        outer.addView(
-            Design.body(this, "Dictate on your phone and send the transcript to the active text field on your PC."),
+        // Two pages share the window: talking first, every technical switch behind Settings.
+        homePage = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            setBackgroundColor(Palette.BACKGROUND)
+        }
+        settingsPage = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            setBackgroundColor(Palette.BACKGROUND)
+            visibility = View.GONE
+        }
+        val homeColumn = pageColumn()
+        val settingsColumn = pageColumn()
+        homePage.addView(homeColumn, frameWrap())
+        settingsPage.addView(settingsColumn, frameWrap())
+        root.addView(homePage, frameFull())
+        root.addView(settingsPage, frameFull())
+
+        // ---- home header: label and connection on one line, the title full width below ----
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            Design.overline(this, "VOICE TO PC", Palette.ACCENT),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        val homePill = Design.pill(this).apply {
+            background = RippleDrawable(
+                ColorStateList.valueOf(Design.rippleColor),
+                Design.fill(this@MainActivity, Palette.SURFACE, Metric.PILL_RADIUS, Palette.BORDER, Metric.HAIRLINE_WIDTH),
+                Design.fill(this@MainActivity, Palette.SURFACE, Metric.PILL_RADIUS),
+            )
+            isClickable = true
+            setOnClickListener { showPage(1) }
+        }
+        homeConnectionDot = Design.dot(this, Palette.DISABLED_TEXT).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        }
+        homePill.addView(
+            homeConnectionDot,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = space(1) },
+        )
+        homeConnectionView = Design.value(this, "").apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            maxWidth = dp(112)
+        }
+        homePill.addView(
+            homeConnectionView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        header.addView(
+            homePill,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = space(1) },
+        )
+        homeColumn.addView(header, matchWrap())
+        homeColumn.addView(
+            Design.title(this, "Speak. See it typed."),
             matchWrap().apply { topMargin = space(1) },
         )
-        addGap(outer, 24)
 
-        // ---- dictation: the primary action, so it sits first and reads as the hero ---------
-        val dictationCard = card()
-        dictationCard.addView(Design.overline(this, "DICTATION"), matchWrap())
-        dictationCard.addView(Design.headline(this, "Capture speech"), matchWrap().apply { topMargin = space(1) })
-        micButton = button("Start speaking", primary = true, hero = true) { beginDictation() }
-        dictationCard.addView(micButton, buttonParams().apply { topMargin = space(2) })
-        holdButton = button("Hold to talk", style = ButtonStyle.SECONDARY, hero = true) { }
-        holdButton.setOnTouchListener { view, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    view.isPressed = true
-                    holdActive = true
-                    beginDictation()
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    view.isPressed = false
-                    finalizeListening()
-                    true
-                }
-                else -> false
+        // ---- the one control that matters -------------------------------------------------
+        talkButton = TalkButton(this)
+        talkButton.onTalkStart = { beginDictation() }
+        talkButton.onTalkStop = { finalizeListening() }
+        // A gesture the system interrupted must never send a half utterance.
+        talkButton.onTalkCancel = { cancelDictation() }
+        homeColumn.addView(
+            talkButton,
+            LinearLayout.LayoutParams(dp(240), dp(240)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = space(3)
+            },
+        )
+
+        modeTabs = SegmentedControl(this).apply {
+            setItems(listOf("Hold", "Tap"), if (holdMode) 0 else 1)
+            onSelect = { index ->
+                holdMode = index == 0
+                preferences.edit().putString(KEY_TALK_MODE, if (holdMode) "hold" else "tap").apply()
+                refreshUi()
             }
         }
-        dictationCard.addView(holdButton, buttonParams().apply { topMargin = space(1) })
-        val statusPanel = Design.panel(this)
-        statusPanel.addView(Design.overline(this, "STATUS"), matchWrap())
+        homeColumn.addView(
+            modeTabs,
+            LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = space(1)
+            },
+        )
+        modeHintView = Design.caption(this, "").apply { gravity = Gravity.CENTER }
+        homeColumn.addView(modeHintView, matchWrap().apply { topMargin = space(1) })
+
+        // ---- live status: a single line, no section label ---------------------------------
+        val statusPanel = Design.panel(this).apply { minimumHeight = space(6) }
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        statusLiveDot = Design.dot(this, Palette.SUCCESS)
+        statusLiveDot = Design.dot(this, Palette.MUTED)
         statusRow.addView(
             statusLiveDot,
             LinearLayout.LayoutParams(
@@ -337,40 +500,54 @@ class MainActivity : AppCompatActivity() {
         }
         statusRow.addView(
             statusView,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                topMargin = space(1)
-            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
         )
         statusPanel.addView(statusRow, matchWrap())
-        dictationCard.addView(statusPanel, matchWrap().apply { topMargin = space(2) })
-        retryButton = button("Retry sending") { retryPending() }
-        dictationCard.addView(retryButton, buttonParams().apply { topMargin = space(2) })
-        discardButton = button("Discard transcript", style = ButtonStyle.QUIET) { discardPending() }
-        dictationCard.addView(discardButton, buttonParams().apply { topMargin = space(1) })
-        addCard(outer, dictationCard)
+        homeColumn.addView(statusPanel, matchWrap().apply { topMargin = space(2) })
 
-        // ---- notification shade: talk without leaving the app you are in -------------------
-        val shadeCard = card()
-        shadeCard.addView(Design.overline(this, "ANY APP"), matchWrap())
-        shadeCard.addView(Design.headline(this, "Talk from the notification shade"), matchWrap().apply { topMargin = space(1) })
-        shadeCard.addView(
-            Design.body(
+        retryButton = button("Retry sending") { retryPending() }
+        homeColumn.addView(retryButton, buttonParams().apply { topMargin = space(2) })
+        discardButton = button("Discard transcript", style = ButtonStyle.QUIET) { discardPending() }
+        homeColumn.addView(discardButton, buttonParams().apply { topMargin = space(1) })
+
+        homeColumn.addView(
+            Design.caption(
                 this,
-                "Keep a Talk button in the shade. Swipe down, tap Talk, speak, and the text lands on your PC without closing the app you are in.",
-            ),
+                "Click the target text field on your PC before speaking. Each utterance is sent once, when you finish talking.",
+            ).apply { gravity = Gravity.CENTER },
+            matchWrap().apply { topMargin = space(2) },
+        )
+
+        // ---- settings page: everything technical, in one calm stack -----------------------
+        settingsColumn.addView(Design.title(this, "Settings"), matchWrap())
+        settingsColumn.addView(
+            Design.body(this, "Pairing, recognition and text options live here."),
             matchWrap().apply { topMargin = space(1) },
         )
-        val shadeShow = button("Show Talk in the notification shade", primary = true) {
-            DictationNotifications.ensureReady(this)
-            setStatus("SpeakType is pinned to the notification shade. Swipe down to reach it from any app.")
+        addGap(settingsColumn, 16)
+
+        // ---- appearance: dark is the default, light matches the PC dashboard --------------
+        val appearanceCard = card()
+        appearanceCard.addView(Design.overline(this, "APPEARANCE"), matchWrap())
+        appearanceCard.addView(Design.headline(this, "Theme"), matchWrap().apply { topMargin = space(1) })
+        appearanceCard.addView(
+            Design.body(this, "Dark keeps the talk screen calm at night. Light matches the PC dashboard."),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        val themeTabs = SegmentedControl(this).apply {
+            setItems(listOf("System", "Light", "Dark"), themeModeIndex())
+            onSelect = { index ->
+                chooseTheme(
+                    when (index) {
+                        1 -> "light"
+                        2 -> "dark"
+                        else -> "system"
+                    },
+                )
+            }
         }
-        shadeCard.addView(shadeShow, buttonParams().apply { topMargin = space(2) })
-        val shadeHide = button("Remove from the notification shade", style = ButtonStyle.QUIET) {
-            DictationNotifications.dismiss(this)
-            setStatus("Shade controls hidden. Reopen the app or tap Show to bring them back.")
-        }
-        shadeCard.addView(shadeHide, buttonParams().apply { topMargin = space(1) })
-        addCard(outer, shadeCard)
+        appearanceCard.addView(themeTabs, matchWrap().apply { topMargin = space(2) })
+        addCard(settingsColumn, appearanceCard)
 
         // ---- connection -------------------------------------------------------------------
         val connectionCard = card()
@@ -408,31 +585,32 @@ class MainActivity : AppCompatActivity() {
         updateView = Design.caption(this, "")
         updateView.visibility = View.GONE
         connectionCard.addView(updateView, matchWrap().apply { topMargin = space(1) })
-        addCard(outer, connectionCard)
+        addCard(settingsColumn, connectionCard)
 
         // ---- recognition ------------------------------------------------------------------
         val recognitionCard = card()
         recognitionCard.addView(Design.overline(this, "SPEECH"), matchWrap())
-        recognitionCard.addView(Design.headline(this, "Recognition source"), matchWrap().apply { topMargin = space(1) })
-        privacyView = bodyText("")
-        recognitionCard.addView(privacyView, matchWrap().apply { topMargin = space(1) })
-        val privacyRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        onlineButton = button("Online", primary = false) { choosePrivacy(online = true) }
-        offlineButton = button("Offline only", primary = false) { choosePrivacy(online = false) }
-        privacyRow.addView(
-            onlineButton,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        recognitionCard.addView(Design.headline(this, "Recognition"), matchWrap().apply { topMargin = space(1) })
+        recognitionCard.addView(
+            Design.body(
+                this,
+                "Your phone recognizes speech with its own speech service — offline when the language pack is installed — and sends only text to the PC. Without an offline pack, the service may recognize online. Nothing is downloaded on the PC.",
+            ),
+            matchWrap().apply { topMargin = space(1) },
         )
-        privacyRow.addView(
-            offlineButton,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = space(1)
-            },
+        recognitionCard.addView(Design.divider(this), matchWrap())
+        val permissionRow = Design.settingRow(this, "MICROPHONE ACCESS", "Granted") { permissionValue = it }
+        permissionRow.setOnClickListener { onMicrophoneRow() }
+        recognitionCard.addView(permissionRow, matchWrap())
+        recognitionCard.addView(Design.divider(this), matchWrap())
+        micTestButton = button("Test microphone (3 s)", style = ButtonStyle.QUIET) { runMicTest() }
+        recognitionCard.addView(micTestButton, buttonParams().apply { topMargin = space(2) })
+        micTestView = Design.caption(
+            this,
+            "Records 3 seconds locally to confirm the app is actually receiving sound.",
         )
-        recognitionCard.addView(privacyRow, matchWrap().apply { topMargin = space(2) })
-        addCard(outer, recognitionCard)
+        recognitionCard.addView(micTestView, matchWrap().apply { topMargin = space(1) })
+        addCard(settingsColumn, recognitionCard)
 
         // ---- output -----------------------------------------------------------------------
         val optionsCard = card()
@@ -445,16 +623,92 @@ class MainActivity : AppCompatActivity() {
         val languageRow = Design.settingRow(this, "SPEECH LANGUAGE", "Bangla") { languageValue = it }
         languageRow.setOnClickListener { cycleLanguageMode() }
         optionsCard.addView(languageRow, matchWrap())
-        addCard(outer, optionsCard)
+        addCard(settingsColumn, optionsCard)
 
-        outer.addView(
-            Design.caption(
+        // ---- notification shade: talk without leaving the app you are in -------------------
+        val shadeCard = card()
+        shadeCard.addView(Design.overline(this, "ANY APP"), matchWrap())
+        shadeCard.addView(Design.headline(this, "Talk from the notification shade"), matchWrap().apply { topMargin = space(1) })
+        shadeCard.addView(
+            Design.body(
                 this,
-                "Click the target text field on your PC before speaking. Each utterance is sent once, when you finish talking.",
-            ).apply { gravity = Gravity.CENTER },
+                "Keep a Talk button in the shade. Swipe down, tap Talk, speak, and the text lands on your PC without closing the app you are in.",
+            ),
             matchWrap().apply { topMargin = space(1) },
         )
-        setContentView(scroll)
+        val shadeShow = button("Show Talk in the notification shade", primary = true) {
+            DictationNotifications.ensureReady(this)
+            setStatus("SpeakType is pinned to the notification shade. Swipe down to reach it from any app.")
+        }
+        shadeCard.addView(shadeShow, buttonParams().apply { topMargin = space(2) })
+        val shadeHide = button("Remove from the notification shade", style = ButtonStyle.QUIET) {
+            DictationNotifications.dismiss(this)
+            setStatus("Shade controls hidden. Reopen the app or tap Show to bring them back.")
+        }
+        shadeCard.addView(shadeHide, buttonParams().apply { topMargin = space(1) })
+        addCard(settingsColumn, shadeCard)
+
+        // ---- about ------------------------------------------------------------------------
+        val aboutCard = card()
+        aboutCard.addView(Design.overline(this, "ABOUT"), matchWrap())
+        aboutCard.addView(
+            Design.headline(this, "SpeakType ${BuildConfig.VERSION_NAME}"),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        aboutCard.addView(
+            Design.body(this, "Build ${BuildConfig.VERSION_CODE} · Updates arrive over the air from your PC or GitHub."),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        voiceDiagView = Design.caption(
+            this,
+            lastVoiceError ?: "Last voice error: none this session.",
+        )
+        aboutCard.addView(voiceDiagView, matchWrap().apply { topMargin = space(1) })
+        val copyDiagnosticsButton = button("Copy diagnostics", style = ButtonStyle.QUIET) { copyDiagnostics() }
+        aboutCard.addView(copyDiagnosticsButton, buttonParams().apply { topMargin = space(2) })
+        aboutCard.addView(
+            Design.caption(this, "Your PC must be on the same Wi-Fi network."),
+            matchWrap().apply { topMargin = space(1) },
+        )
+        addCard(settingsColumn, aboutCard)
+
+        settingsColumn.addView(
+            Design.caption(
+                this,
+                "Pairing trusts the certificate fingerprint shown in the QR code. Transcripts are sent only to your paired PC.",
+            ).apply { gravity = Gravity.CENTER },
+            matchWrap().apply { topMargin = space(2) },
+        )
+
+        // ---- floating nav: two segments, always within thumb reach ------------------------
+        pageTabs = SegmentedControl(this).apply {
+            setItems(listOf("Talk", "Settings"), 0)
+            elevation = dp(8).toFloat()
+            onSelect = { index -> if (index in 0..1) showPage(index) }
+        }
+        val nav = FrameLayout(this).apply {
+            setPadding(space(4), 0, space(4), space(3))
+            // Let the pill's elevation shadow fade into the bottom gutter instead of
+            // ending on a hard clip line at the wrapper bounds.
+            clipChildren = false
+            clipToPadding = false
+        }
+        nav.addView(
+            pageTabs,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        root.addView(
+            nav,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM,
+            ),
+        )
+        setContentView(root)
     }
 
     private fun button(
@@ -479,16 +733,43 @@ class MainActivity : AppCompatActivity() {
         parent.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
     }
 
-    private fun bodyText(label: String): TextView = Design.body(this, label)
-
     private fun buttonParams() = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT,
     )
 
-    private fun applyChoiceStyle(button: Button, selected: Boolean) {
-        button.background = Design.choiceBackground(this, selected)
-        button.setTextColor(Design.choiceTextColors(selected))
+    /** One scrollable page: gutters on the sides, room at the bottom for the floating nav. */
+    private fun pageColumn(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(Metric.GUTTER), space(3), dp(Metric.GUTTER), space(13))
+    }
+
+    private fun frameFull() = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+    )
+
+    private fun frameWrap() = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT,
+    )
+
+    /** Two fixed pages: the floating nav is the only way between them. */
+    private fun showPage(index: Int) {
+        if (!::homePage.isInitialized || !::settingsPage.isInitialized) return
+        val toSettings = index == 1
+        currentPage = if (toSettings) 1 else 0
+        homePage.visibility = if (toSettings) View.GONE else View.VISIBLE
+        settingsPage.visibility = if (toSettings) View.VISIBLE else View.GONE
+        // select() does not fire onSelect, so this cannot loop back into showPage.
+        if (::pageTabs.isInitialized) pageTabs.select(if (toSettings) 1 else 0)
+        if (toSettings) refreshUi()
+    }
+
+    private fun themeModeIndex(): Int = when (themeMode) {
+        "light" -> 1
+        "dark" -> 2
+        else -> 0
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
@@ -498,7 +779,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    /** One 8dp spacing step, so vertical rhythm stays on the design scale. */
     /** One 8dp spacing step, so vertical rhythm stays on the design scale. */
     private fun space(steps: Int): Int = dp(steps * Metric.SPACING_UNIT)
 
@@ -510,29 +790,47 @@ class MainActivity : AppCompatActivity() {
             linkState == "unreachable" -> Palette.DANGER
             else -> Palette.WARNING
         }
-        if (::statusDot.isInitialized) statusDot.setTextColor(dotColor)
-        if (::statusDot.isInitialized) statusDot.text = "●"
-        connectionView.text = when {
+        val connectionLabel = when {
             connection == null -> "Not connected"
             linkState == "connected" -> "Connected · ${connection.host}"
-            linkState == "unreachable" -> "PC unreachable · tap Reconnect"
+            linkState == "unreachable" && linkError == "cert" ->
+                "PC certificate changed · scan the QR code again"
+            linkState == "unreachable" -> "PC unreachable · ${connection.host} · tap Reconnect"
             else -> "Checking…"
         }
-        privacyView.text = when (privacyOnline) {
-            true -> "Online recognition may send audio to your phone's speech service."
-            false -> "Offline only uses a model on your phone. It will not switch to online recognition."
-            null -> "Choose where speech is recognized. Select a mode before dictation."
+        if (::statusDot.isInitialized) statusDot.setTextColor(dotColor)
+        if (::statusDot.isInitialized) statusDot.text = "●"
+        connectionView.text = connectionLabel
+        if (::homeConnectionDot.isInitialized) homeConnectionDot.setTextColor(dotColor)
+        if (::homeConnectionView.isInitialized) {
+            val shortLabel = when {
+                connection == null -> "Not paired"
+                linkState == "connected" -> "Connected"
+                linkState == "unreachable" && linkError == "cert" -> "Scan QR again"
+                linkState == "unreachable" -> "PC offline"
+                else -> "Checking…"
+            }
+            homeConnectionView.text = shortLabel
+            homeConnectionView.parent?.let { pill ->
+                (pill as? View)?.contentDescription = "Connection: $shortLabel. Open settings."
+            }
         }
-        applyChoiceStyle(onlineButton, privacyOnline == true)
-        applyChoiceStyle(offlineButton, privacyOnline == false)
+        if (::permissionValue.isInitialized) {
+            permissionValue.text =
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    "Granted · tap to manage"
+                } else {
+                    "Not granted · tap to allow"
+                }
+        }
         outputValue.text = when (outputMode) {
             "roman" -> "Banglish"
             "english" -> "English"
             else -> "Bengali script"
         }
         languageValue.text = when {
-            Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> "Auto (Bangla + English)"
             outputMode == "english" -> "English (output lock)"
+            languageMode == "auto" -> "Auto (phone default)"
             languageMode == "en" -> "English"
             else -> "Bangla"
         }
@@ -540,9 +838,34 @@ class MainActivity : AppCompatActivity() {
         retryButton.visibility = if (hasPending) View.VISIBLE else View.GONE
         discardButton.visibility = if (hasPending) View.VISIBLE else View.GONE
         retryButton.isEnabled = connection != null && !listening && !pendingUncertain
-        micButton.isEnabled = privacyOnline != null && !listening && !hasPending
-        if (::holdButton.isInitialized) {
-            holdButton.isEnabled = privacyOnline != null && !hasPending
+        if (::talkButton.isInitialized) {
+            val ready = connection != null && linkState == "connected"
+            talkButton.mode = if (holdMode) TalkButton.Mode.HOLD else TalkButton.Mode.TAP
+            talkButton.phase = if (listening) TalkButton.Phase.LISTENING else TalkButton.Phase.IDLE
+            talkButton.isEnabled = ready && !hasPending
+            talkButton.title = when {
+                connection == null -> "Pair first"
+                !ready -> "PC offline"
+                listening -> "Listening…"
+                holdMode -> "Hold to talk"
+                else -> "Tap to talk"
+            }
+            talkButton.hint = when {
+                connection == null -> "Pair with your PC in Settings"
+                !ready -> "Check Wi-Fi, then tap Reconnect"
+                listening && holdMode -> "Speak, then release or tap to send"
+                listening -> "Tap to send"
+                holdMode -> "Hold to talk, or tap to start"
+                else -> "Tap to start · tap again to stop"
+            }
+        }
+        if (::modeTabs.isInitialized) modeTabs.select(if (holdMode) 0 else 1)
+        if (::modeHintView.isInitialized) {
+            modeHintView.text = if (holdMode) {
+                "Hold while you speak, or tap to start and tap again to send."
+            } else {
+                "Tap to start; tap again to stop, or pause and it sends by itself."
+            }
         }
         pairButton.isEnabled = !listening
         if (::reconnectButton.isInitialized) {
@@ -550,7 +873,8 @@ class MainActivity : AppCompatActivity() {
             reconnectButton.isEnabled = !listening
         }
         if (::updateButton.isInitialized) {
-            updateButton.isEnabled = connection != null && !updateBusy
+            // Unpaired still checks GitHub, so the update path never depends on a PC.
+            updateButton.isEnabled = !updateBusy
             updateButton.text = when {
                 updateBusy -> "Checking for update…"
                 availableUpdate != null -> "Install update"
@@ -566,11 +890,127 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun choosePrivacy(online: Boolean) {
-        privacyOnline = online
-        preferences.edit().putBoolean(KEY_ONLINE_MODE, online).apply()
-        refreshUi()
-        setStatus(if (online) "Online recognition selected." else "Offline-only recognition selected.")
+    private fun onMicrophoneRow() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingMicStart = false
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), MIC_PERMISSION_REQUEST)
+        } else {
+            openAppSettings()
+        }
+    }
+
+    private fun openAppSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        } catch (_: Exception) {
+            setStatus("Could not open the phone's app settings.")
+        }
+    }
+
+    private fun runMicTest() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingMicStart = false
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), MIC_PERMISSION_REQUEST)
+            setStatus("Allow the microphone, then run the test again.")
+            return
+        }
+        if (::micTestButton.isInitialized) micTestButton.isEnabled = false
+        if (::micTestView.isInitialized) micTestView.text = "Listening for 3 seconds. Say something now…"
+        Thread {
+            val peak = recordMicPeak(3000)
+            runOnUiThread {
+                if (::micTestButton.isInitialized) micTestButton.isEnabled = true
+                val working = peak >= MIC_TEST_SPEECH_PEAK
+                lastMicTest = when {
+                    peak < 0 -> "Mic test: could not open the microphone."
+                    working -> "Mic test: sound detected (peak $peak)."
+                    else -> "Mic test: no sound reached the app (peak $peak)."
+                }
+                if (::micTestView.isInitialized) {
+                    micTestView.text = when {
+                        peak < 0 ->
+                            "The microphone could not be opened. Another app may be using it, or the phone is blocking access."
+                        working ->
+                            "Microphone works — the app heard sound (peak $peak). If Talk still fails, check the PC connection."
+                        else ->
+                            "No sound reached the app (peak $peak). Allow Microphone for SpeakType, turn off any mic privacy switch, then test again."
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** Highest 16-bit sample while recording for [durationMs]; -1 if the mic cannot be opened. */
+    private fun recordMicPeak(durationMs: Int): Int {
+        val sampleRate = 16000
+        val bufferSize = maxOf(
+            AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT),
+            sampleRate,
+        )
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize,
+            )
+        } catch (_: Exception) {
+            return -1
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            return -1
+        }
+        val buffer = ShortArray(1600)
+        val target = sampleRate * durationMs / 1000
+        var read = 0
+        var peak = 0
+        try {
+            record.startRecording()
+            while (read < target) {
+                val count = record.read(buffer, 0, buffer.size)
+                if (count <= 0) break
+                read += count
+                for (index in 0 until count) {
+                    val value = kotlin.math.abs(buffer[index].toInt())
+                    if (value > peak) peak = value
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try {
+                record.stop()
+            } catch (_: Exception) {
+                // The recorder may already be stopped.
+            }
+            record.release()
+        }
+        return peak
+    }
+
+    private fun copyDiagnostics() {
+        val connection = SecureConnectionStore(this).load()
+        val text = buildString {
+            appendLine("SpeakType ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            appendLine("Android ${Build.VERSION.RELEASE} · SDK ${Build.VERSION.SDK_INT}")
+            appendLine(
+                "Mic permission: " +
+                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        "granted"
+                    } else {
+                        "denied"
+                    },
+            )
+            appendLine("Recognition: on-phone speech service · link: $linkState")
+            appendLine("PC: ${connection?.host ?: "not paired"}:${connection?.port ?: "-"}")
+            appendLine("Speech language: $languageMode · text format: $outputMode")
+            appendLine(lastMicTest ?: "Mic test: not run")
+            appendLine(lastVoiceError ?: "Last voice error: none this session")
+        }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("SpeakType diagnostics", text))
+        setStatus("Diagnostics copied. Paste them into the chat with me.")
     }
 
     private fun toggleOutputMode() {
@@ -584,14 +1024,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun cycleLanguageMode() {
-        languageMode = if (Build.VERSION.SDK_INT >= 34) {
-            when (languageMode) {
-                "auto" -> "bn"
-                "bn" -> "en"
-                else -> "auto"
-            }
-        } else {
-            if (languageMode == "en") "bn" else "en"
+        languageMode = when (languageMode) {
+            "auto" -> "bn"
+            "bn" -> "en"
+            else -> "auto"
         }
         preferences.edit().putString(KEY_LANGUAGE_MODE, languageMode).apply()
         refreshUi()
@@ -654,9 +1090,11 @@ class MainActivity : AppCompatActivity() {
                 )
                 val token = response.getString("session_token")
                 val hostname = response.optString("hostname")
+                connectionGeneration.incrementAndGet()
                 SecureConnectionStore(this).save(PcConnection(host, port, token, fingerprint, hostname))
                 runOnUiThread {
                     linkState = "connected"
+                    linkError = null
                     refreshUi()
                     setStatus("Paired with your PC. Click a text field on the PC before speaking.")
                 }
@@ -667,197 +1105,90 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginDictation() {
-        if (privacyOnline == null) {
-            setStatus("Choose Online or Offline recognition first.")
+        if (listening) return
+        val connection = SecureConnectionStore(this).load()
+        if (connection == null) {
+            setStatus("Pair with your PC first. Open Settings and scan the QR code.")
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingMicStart = true
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), MIC_PERMISSION_REQUEST)
             return
         }
-        val available = if (privacyOnline == true) {
-            SpeechRecognizer.isRecognitionAvailable(this)
-        } else {
-            Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-        }
-        if (!available) {
-            setStatus(if (privacyOnline == true) "No speech recognition service is available on this phone." else "Offline speech recognition is unavailable on this phone. Select Online recognition to continue.")
+        if (linkState != "connected") {
+            setStatus("The PC is not reachable. Check that both devices are on the same Wi-Fi, then tap Reconnect in Settings.")
             return
         }
+        val session = SpeechSession(this, languageMode, outputMode, autoStopOnSilence = !holdMode)
+        micSession = session
+        listening = true
+        if (::talkButton.isInitialized) talkButton.speechHeard = false
+        refreshUi()
+        setStatus("Speak now. The transcript will be sent when you finish.")
+        mainHandler.removeCallbacks(sessionTimeout)
+        mainHandler.postDelayed(sessionTimeout, SESSION_TIMEOUT_MS)
+        session.start(object : SpeechSession.Callback {
+            override fun onSpeech() {
+                if (micSession === session) markSpeechHeard()
+            }
 
-        try {
-            recognizer = if (privacyOnline == true) {
-                SpeechRecognizer.createSpeechRecognizer(this)
-            } else {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            }
-            recognizer?.setRecognitionListener(recognitionListener())
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500)
-                when {
-                    outputMode == "english" -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                    Build.VERSION.SDK_INT >= 34 && languageMode == "auto" -> {
-                        putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", "balanced")
-                        putStringArrayListExtra(
-                            "android.speech.extra.LANGUAGE_SWITCH_ALLOWED_LANGUAGES",
-                            arrayListOf("bn-BD", "en-US"),
-                        )
-                        putExtra("android.speech.extra.ENABLE_LANGUAGE_DETECTION", true)
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
-                    }
-                    languageMode == "en" -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                    else -> putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
+            override fun onResult(text: String) {
+                if (!listening || micSession !== session) return
+                stopMicSession()
+                if (text.isBlank()) {
+                    setStatus("No speech was recognized. Nothing was sent.")
+                    return
                 }
-                if (privacyOnline == false) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-            listening = true
-            if (::holdButton.isInitialized) {
-                holdButton.text = if (holdActive) "Release to send" else "Hold to talk"
-            }
-            micButton.text = "Listening…"
-            refreshUi()
-            setStatus("Speak now. The transcript will be sent when you finish.")
-            recognizer?.startListening(intent)
-        } catch (error: Exception) {
-            stopRecognizer()
-            setStatus("Could not start the microphone: ${error.message ?: "speech service error"}")
-        }
-    }
-
-    private fun recognitionListener() = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {
-            runOnUiThread { setStatus("Listening…") }
-        }
-        override fun onBeginningOfSpeech() = Unit
-        override fun onRmsChanged(rmsdB: Float) = Unit
-        override fun onBufferReceived(buffer: ByteArray?) = Unit
-        override fun onEndOfSpeech() {
-            runOnUiThread { setStatus("Speech ended. Preparing transcript…") }
-        }
-        override fun onError(error: Int) {
-            runOnUiThread {
-                stopRecognizer()
-                queuePreview("")
-                val explanation = when (error) {
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required."
-                    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "The speech service does not support this language."
-                    SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "The language model is unavailable. Download it for offline use or choose another language."
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "The speech service has a network error."
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't hear anything — tap Start speaking and speak again. Nothing was sent."
-                    else -> "Speech recognition failed (code $error). Nothing was sent."
-                }
-                setStatus(explanation)
-            }
-        }
-        override fun onResults(results: Bundle?) {
-            val transcript = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
-            runOnUiThread {
-                stopRecognizer()
-                if (transcript.isBlank()) {
-                    setStatus("No text was recognized.")
-                    return@runOnUiThread
-                }
-                val output = transformOutput(transcript)
+                // The PC applies the chosen text format when typing.
                 pendingId = UUID.randomUUID().toString()
-                pendingText = output
+                pendingText = text
                 pendingUncertain = false
                 refreshUi()
                 sendPending()
             }
-        }
-        override fun onPartialResults(partialResults: Bundle?) {
-            val text = partialResults
-                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                ?.firstOrNull()
-                ?.trim()
-                .orEmpty()
-            if (text.isNotEmpty()) queuePreview(transformOutput(text))
-        }
-        override fun onEvent(eventType: Int, params: Bundle?) = Unit
-    }
 
-    private fun transformOutput(text: String): String = when (outputMode) {
-        "roman" -> BengaliRomanizer.transliterate(text)
-        "english" -> EnglishNormalizer.normalize(text)
-        else -> text
-    }
-
-    /**
-     * Preview updates are best-effort: keep only the newest text and drop the rest, so a slow
-     * network can never build a backlog ahead of the final transcript.
-     */
-    private fun queuePreview(text: String) {
-        previewLatest.set(text)
-        schedulePreview()
-    }
-
-    private fun schedulePreview() {
-        if (previewLatest.get() == null) return
-        if (!previewScheduled.compareAndSet(false, true)) return
-        previewWorker.execute {
-            try {
-                while (true) {
-                    val next = previewLatest.getAndSet(null) ?: break
-                    try {
-                        postPreview(next)
-                    } catch (_: Exception) {
-                        // Ignore: the final transcript is what actually gets typed.
-                    }
-                }
-            } finally {
-                previewScheduled.set(false)
+            override fun onError(message: String) {
+                if (!listening || micSession !== session) return
+                stopMicSession()
+                lastVoiceError = "Last voice error: $message"
+                if (::voiceDiagView.isInitialized) voiceDiagView.text = lastVoiceError
+                setStatus(message)
             }
-            if (previewLatest.get() != null) schedulePreview()
-        }
+        })
     }
 
-    private fun postPreview(text: String) {
-        val connection = SecureConnectionStore(this).load() ?: return
-        postJson(
-            connection.host,
-            connection.port,
-            connection.fingerprint,
-            "/v1/preview",
-            JSONObject().put("text", text),
-            connection.sessionToken,
-        )
-    }
-
-    /** Hold-to-talk: ask the recognizer to finalize so onResults can deliver the transcript. */
+    /** Release or tap to stop: let the phone's recognizer finalize the utterance. */
     private fun finalizeListening() {
-        val active = recognizer
-        if (active == null) {
-            stopRecognizer()
+        val session = micSession
+        if (session == null) {
+            stopMicSession()
             return
         }
-        try {
-            active.stopListening()
-            setStatus("Finishing your utterance...")
-            mainHandler.removeCallbacks(finalizeTimeout)
-            mainHandler.postDelayed(finalizeTimeout, FINALIZE_TIMEOUT_MS)
-        } catch (error: Exception) {
-            stopRecognizer()
-            setStatus("Could not finish the recording: ${error.message ?: "speech service error"}")
-        }
+        setStatus("Finishing…")
+        mainHandler.removeCallbacks(finalizeTimeout)
+        mainHandler.postDelayed(finalizeTimeout, FINALIZE_TIMEOUT_MS)
+        session.stop()
     }
 
-    private fun stopRecognizer() {
+    /** The gesture was interrupted or the page let go of the mic: drop it without sending. */
+    private fun cancelDictation() {
+        micSession?.cancel()
+        stopMicSession()
+        setStatus("Dictation cancelled. Nothing was sent.")
+    }
+
+    /** Voice was detected, so a hold release may finalize the utterance. */
+    private fun markSpeechHeard() {
+        if (::talkButton.isInitialized) talkButton.speechHeard = true
+    }
+
+    private fun stopMicSession() {
         listening = false
-        holdActive = false
         mainHandler.removeCallbacks(finalizeTimeout)
-        recognizer?.setRecognitionListener(null)
-        recognizer?.destroy()
-        recognizer = null
-        if (::micButton.isInitialized) {
-            micButton.text = "Start speaking"
-            refreshUi()
-        }
-        if (::holdButton.isInitialized) holdButton.text = "Hold to talk"
+        mainHandler.removeCallbacks(sessionTimeout)
+        micSession = null
+        if (::talkButton.isInitialized) refreshUi()
     }
 
     private fun sendPending() {
@@ -878,7 +1209,7 @@ class MainActivity : AppCompatActivity() {
                     connection.port,
                     connection.fingerprint,
                     "/v1/send",
-                    JSONObject().put("id", id).put("text", transcript),
+                    JSONObject().put("id", id).put("text", transcript).put("output", outputMode),
                     connection.sessionToken,
                 )
                 if (!response.optBoolean("ok")) throw IllegalStateException("The PC did not accept the text.")
@@ -1133,6 +1464,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchInstaller(file: File) {
+        // Android rejects a downgrade with a bare "App not installed"; catch it here instead.
+        val archive = packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        if (archive != null) {
+            val installed = packageManager.getPackageInfo(packageName, 0)
+            val archiveCode = PackageInfoCompat.getLongVersionCode(archive)
+            val installedCode = PackageInfoCompat.getLongVersionCode(installed)
+            if (archiveCode < installedCode) {
+                file.delete()
+                setStatus(
+                    "That build (version $archiveCode) is older than the installed app " +
+                        "(version $installedCode), so it was not installed."
+                )
+                return
+            }
+        }
         try {
             val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -1158,10 +1504,12 @@ class MainActivity : AppCompatActivity() {
                     message.contains("Could not") ||
                     message.contains("No speech", ignoreCase = true) ||
                     message.contains("No text was recognized") ||
+                    message.contains("Didn't hear", ignoreCase = true) ||
                     message.contains("network error", ignoreCase = true) -> Palette.DANGER
                 message.contains("Checking") || message.contains("Sending") ||
                     message.contains("Preparing") || message.contains("Finishing") ||
-                    message.contains("Downloading") || message.contains("Speech ended") -> Palette.WARNING
+                    message.contains("Downloading") || message.contains("Speech ended") ||
+                    message.contains("may be partially", ignoreCase = true) -> Palette.WARNING
                 else -> Palette.MUTED
             }
             statusLiveDot.setTextColor(color)
@@ -1176,8 +1524,18 @@ class MainActivity : AppCompatActivity() {
                 else setStatus("Camera permission is required to scan the PC pairing code.")
             }
             MIC_PERMISSION_REQUEST -> {
-                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginDictation()
-                else setStatus("Microphone permission is required for voice recognition.")
+                val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+                // Only start dictation when the request came from the talk button; from the
+                // Settings row the user just wanted the permission granted.
+                if (granted && pendingMicStart) {
+                    beginDictation()
+                } else if (granted) {
+                    refreshUi()
+                    setStatus("Microphone permission granted.")
+                } else {
+                    setStatus("Microphone permission is required for voice recognition.")
+                }
+                pendingMicStart = false
             }
             // Denial is fine: dictation still works, the foreground service just stays silent.
             NOTIFICATION_PERMISSION_REQUEST -> Unit
@@ -1185,9 +1543,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        stopRecognizer()
+        micSession?.cancel()
+        stopMicSession()
         worker.shutdownNow()
-        previewWorker.shutdownNow()
         super.onDestroy()
     }
 }
@@ -1388,98 +1746,6 @@ private fun openJson(
         return response
     } finally {
         connection.disconnect()
-    }
-}
-
-internal object EnglishNormalizer {
-    // ponytail: puny local cleanup only; upgrade to on-device translation model when user asks for real bn→en translation.
-    fun normalize(text: String): String {
-        var out = text.replace(Regex("[\\u0980-\\u09FF]+")) { m -> BengaliRomanizer.transliterate(m.value) }
-        out = out.replace(Regex("\\s+"), " ").trim()
-        if (out.isEmpty()) return out
-        return out[0].uppercaseChar() + out.substring(1)
-    }
-}
-
-internal object BengaliRomanizer {
-    private val consonants = mapOf(
-        'ক' to "k", 'খ' to "kh", 'গ' to "g", 'ঘ' to "gh", 'ঙ' to "ng",
-        'চ' to "ch", 'ছ' to "chh", 'জ' to "j", 'ঝ' to "jh", 'ঞ' to "ny",
-        'ট' to "t", 'ঠ' to "th", 'ড' to "d", 'ঢ' to "dh", 'ণ' to "n",
-        'ত' to "t", 'থ' to "th", 'দ' to "d", 'ধ' to "dh", 'ন' to "n",
-        'প' to "p", 'ফ' to "f", 'ব' to "b", 'ভ' to "bh", 'ম' to "m",
-        'য' to "j", 'র' to "r", 'ল' to "l", 'শ' to "sh", 'ষ' to "sh",
-        'স' to "s", 'হ' to "h", 'ড়' to "r", 'ঢ়' to "rh", 'য়' to "y",
-        'ৎ' to "t",
-    )
-    private val independentVowels = mapOf(
-        'অ' to "o", 'আ' to "a", 'ই' to "i", 'ঈ' to "i", 'উ' to "u",
-        'ঊ' to "u", 'ঋ' to "ri", 'এ' to "e", 'ঐ' to "oi", 'ও' to "o", 'ঔ' to "ou",
-    )
-    private val vowelSigns = mapOf(
-        'া' to "a", 'ি' to "i", 'ী' to "i", 'ু' to "u", 'ূ' to "u",
-        'ৃ' to "ri", 'ে' to "e", 'ৈ' to "oi", 'ো' to "o", 'ৌ' to "ou",
-    )
-
-    fun transliterate(text: String): String {
-        val regex = Regex("[\\u0980-\\u09FF]+")
-        return regex.replace(text) { match -> transliterateBengaliWord(match.value) }
-    }
-
-    private fun transliterateBengaliWord(word: String): String {
-        val result = StringBuilder()
-        var index = 0
-        var trailingInherentVowel = false
-        while (index < word.length) {
-            val char = word[index]
-            val nasalOrVisarga = when (char) {
-                'ং' -> "ng"
-                'ঃ' -> "h"
-                'ঁ' -> "n"
-                else -> null
-            }
-            if (nasalOrVisarga != null) {
-                result.append(nasalOrVisarga)
-                trailingInherentVowel = false
-                index++
-                continue
-            }
-            val consonant = consonants[char]
-            if (consonant != null) {
-                result.append(consonant)
-                index++
-                trailingInherentVowel = false
-                when {
-                    index < word.length && vowelSigns.containsKey(word[index]) -> {
-                        result.append(vowelSigns.getValue(word[index]))
-                        index++
-                    }
-                    index < word.length && word[index] == '্' -> index++
-                    else -> {
-                        result.append('o')
-                        trailingInherentVowel = true
-                    }
-                }
-                continue
-            }
-            val vowel = independentVowels[char]
-            if (vowel != null) {
-                result.append(vowel)
-                trailingInherentVowel = false
-            } else {
-                val sign = vowelSigns[char]
-                if (sign != null) {
-                    result.append(sign)
-                    trailingInherentVowel = false
-                } else {
-                    result.append(char)
-                    trailingInherentVowel = false
-                }
-            }
-            index++
-        }
-        if (trailingInherentVowel && result.endsWith("o")) result.setLength(result.length - 1)
-        return result.toString()
     }
 }
 
