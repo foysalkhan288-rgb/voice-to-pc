@@ -841,6 +841,9 @@ class VoiceRequestHandler(http.server.BaseHTTPRequestHandler):
             if not safe_text:
                 self._reply(400, {"ok": False, "error": "empty_text"})
                 return
+            # Consecutive dictations must not stick together in the target field.
+            if not safe_text.endswith((" ", " ")):
+                safe_text += " "
             try:
                 self.state.reserve_delivery(message_id)
             except OSError:

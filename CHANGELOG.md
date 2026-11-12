@@ -4,6 +4,12 @@ All notable changes to SpeakType are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses semantic versioning for the Android `versionName` and the `vX.Y.Z` git tags.
 
+## [v1.7.4] - 2026-11-13
+
+### Changed — PC app (1.3.1)
+
+- Every dictated insertion now ends with a space, so consecutive utterances no longer stick together in the target field and no manual spacebar press is needed between them.
+
 ## [v1.7.3] - 2026-11-13
 
 ### Changed — PC app (1.3.0)

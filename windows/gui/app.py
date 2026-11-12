@@ -32,7 +32,7 @@ from speaktype import (
     set_autostart,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 NAV_ITEMS: tuple[tuple[str, str, type[BasePage]], ...] = (
     ("dashboard", "Dashboard", DashboardPage),

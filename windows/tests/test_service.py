@@ -111,7 +111,7 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(payload["duplicate"])
-        self.assertEqual(self.typed, [("hello world", 0)])
+        self.assertEqual(self.typed, [("hello world ", 0)])
         self.assertEqual(service.state.delivered_ids["m1"], "done")
 
     def test_pairing_code_is_single_use(self) -> None:
@@ -183,7 +183,7 @@ class ServiceTests(unittest.TestCase):
             port, "POST", "/v1/send", body={"id": "slow", "text": "slow typing"}, token=token
         )
         self.assertEqual(status, 200)
-        self.assertEqual(self.typed, [("slow typing", 25)])
+        self.assertEqual(self.typed, [("slow typing ", 25)])
 
     def test_fingerprint_is_stable_sha256_hex(self) -> None:
         service = self._make_service()
@@ -266,7 +266,7 @@ class ServiceTests(unittest.TestCase):
         self._request(port, "POST", "/v1/preview", body={"text": "hello"}, token=token)
         self._request(port, "POST", "/v1/send", body={"id": "p1", "text": "hello"}, token=token)
         self.assertEqual(service.state.preview_snapshot()[0], "")
-        self.assertEqual(self.typed, [("hello", 0)])
+        self.assertEqual(self.typed, [("hello ", 0)])
 
 
     @staticmethod

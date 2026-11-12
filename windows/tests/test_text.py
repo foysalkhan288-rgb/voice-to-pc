@@ -116,7 +116,7 @@ class TextEndpointTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(payload["duplicate"])
-        self.assertEqual(self.typed, ["ami bangla boli"])
+        self.assertEqual(self.typed, ["ami bangla boli "])
 
     def test_send_english_output_normalizes(self) -> None:
         _, port, token = self._paired_service()
@@ -125,7 +125,7 @@ class TextEndpointTests(unittest.TestCase):
             body={"id": "m2", "text": "hello   world", "output": "english"}, token=token,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(self.typed, ["Hello world"])
+        self.assertEqual(self.typed, ["Hello world "])
 
     def test_send_native_keeps_bengali_script(self) -> None:
         _, port, token = self._paired_service()
@@ -134,7 +134,7 @@ class TextEndpointTests(unittest.TestCase):
             body={"id": "m3", "text": "আমি বাংলা বলি"}, token=token,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(self.typed, ["আমি বাংলা বলি"])
+        self.assertEqual(self.typed, ["আমি বাংলা বলি "])
 
     def test_send_rejects_unknown_output(self) -> None:
         _, port, token = self._paired_service()
@@ -163,7 +163,7 @@ class TextEndpointTests(unittest.TestCase):
             port, "POST", "/v1/send", body={"id": "z1", "text": "hello"}, token=token
         )
         self.assertEqual(status, 200)
-        self.assertEqual(self.typed, ["hello"])
+        self.assertEqual(self.typed, ["hello "])
 
     def test_send_composes_decomposed_bangla(self) -> None:
         _, port, token = self._paired_service()
@@ -172,7 +172,7 @@ class TextEndpointTests(unittest.TestCase):
             body={"id": "m5", "text": "ড়", "output": "roman"}, token=token,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(self.typed, ["r"])
+        self.assertEqual(self.typed, ["r "])
 
 
 if __name__ == "__main__":
