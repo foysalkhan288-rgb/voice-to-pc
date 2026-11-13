@@ -39,7 +39,7 @@
 
 ## Recognition answers sound wrong
 
-- Choose **Offline only** at first launch if you do not want audio to go to the speech provider. Offline support depends on the phone and the downloaded language models; it never falls back to online.
+- Recognition prefers the phone's on-device recognizer. Install the offline language pack for your language (Android settings → System → Languages → speech recognition offline packs, wording varies by vendor) to keep audio on the phone; without a pack the speech service may recognize online, and the app retries online once if offline recognition is unavailable.
 - Banglish is local phonetic transliteration and may differ from your spelling conventions.
 - English recognition uses `en-US` and then transliterates remaining Bengali words; it is not a full translator. On Android 14 or newer, the language button may offer automatic Bangla/English switching when the recognition service supports it.
 

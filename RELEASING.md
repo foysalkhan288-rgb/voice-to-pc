@@ -10,14 +10,20 @@ How versioned releases and production signing work.
 
 ## GitHub Actions (automatic)
 
-Every push to `main` runs `.github/workflows/build-android-apk.yml`:
+Every push to `main` and every pull request runs `.github/workflows/ci.yml`:
 
-1. `assembleDebug` → `app-debug.apk`
-2. `assembleRelease` → `app-release.apk` (signed, see below)
-3. `SHA256SUMS.txt` for both files
-4. Publishes all three as the `latest` prerelease (`make_latest: true`)
+1. Windows pytest suite on `windows-latest` (gating, not advisory)
+2. `assembleDebug` → `app-debug.apk`
+3. `assembleRelease` → `app-release.apk` (signed, see below)
+4. `SHA256SUMS.txt` for both files
+5. On pushes to `main`, publishes all three as the rolling `latest` prerelease — the tag phones poll via `releases/tags/latest` for in-app updates
 
-Manual rebuilds: Actions tab → `Build Android APK` → `Run workflow`.
+Every `v*` tag (or a manual run of the Release workflow with an existing tag) runs `.github/workflows/release.yml`:
+
+1. Builds both APKs and the Windows `SpeakType.exe` (PyInstaller on `windows-latest`)
+2. Publishes a versioned, non-prerelease GitHub release named `SpeakType vX.Y.Z` with all three artifacts plus `SHA256SUMS.txt`, using the matching `CHANGELOG.md` section as the release notes
+
+Manual rebuilds: Actions tab → `CI` or `Release` → `Run workflow`.
 
 ## Release signing (production)
 
@@ -38,12 +44,15 @@ After switching to a real release key, existing installs must be uninstalled onc
 
 ## Windows exe
 
-- `windows/dist/SpeakType.exe` is built with `windows/build-exe.bat` (PyInstaller). It is not built in Actions. Publish it manually with the release if needed.
+- Tagged releases build `SpeakType.exe` in Actions (PyInstaller, same flags as `windows/build-exe.bat`) and attach it to the versioned release.
+- Locally, `windows/dist/SpeakType.exe` is built with `windows/build-exe.bat` (requires the venv from `setup.bat`).
 - Notarization/code-signing for the exe is not set up yet; distributing unsigned exes will trigger SmartScreen. A code-signing certificate is the next hardening step.
 
 ## Checklist
 
 - [ ] Bump `versionCode`/`versionName`, update `CHANGELOG.md`
-- [ ] Push to `main`, wait for Actions `Build Android APK` ✓
+- [ ] Push to `main`, wait for Actions `CI` ✓
 - [ ] Verify `latest` release has `app-debug.apk`, `app-release.apk`, `SHA256SUMS.txt`
+- [ ] Push the `vX.Y.Z` tag, wait for Actions `Release` ✓
+- [ ] Verify the versioned release has both APKs, `SpeakType.exe`, `SHA256SUMS.txt`, and changelog notes
 - [ ] Install the new APK on a phone, confirm auto-update prompt from PC/GitHub

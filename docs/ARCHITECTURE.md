@@ -17,9 +17,9 @@ SpeakType has two codebases that communicate over the local network only. There 
 
 ### MainActivity
 
-The single launcher activity. It owns the visible UI, runtime permissions (`RECORD_AUDIO` for dictation, `CAMERA` for the pairing QR), the pairing QR scanner (ZXing), the output-mode button (Bengali script, Banglish, English), the two dictation entries (**Start speaking** and **Hold to talk**), network rediscovery, and the in-app update flow (check GitHub releases, then the PC-served build, compared by SHA-256).
+The single launcher activity. It owns the visible UI (Talk/Settings page switch at the top, the hold-to-talk button and Hold/Tap mode tabs at the bottom of the Talk screen), runtime permissions (`RECORD_AUDIO` for dictation, `CAMERA` for the pairing QR), the pairing QR scanner (ZXing), the output-mode button (Bengali script, Banglish, English), network rediscovery, and the in-app update flow (PC-served build when paired, GitHub releases otherwise, compared by SHA-256, with a versionCode downgrade guard before installing).
 
-Pairing state (host, port, session token, certificate fingerprint) is persisted in `SharedPreferences` with the token encrypted by AES-GCM with a key in the Android Keystore (`speak_type_connection_key`). The speech settings (Online vs Offline only, output mode, language mode) are stored in the same preferences file.
+Pairing state (host, port, session token, certificate fingerprint) is persisted in `SharedPreferences` with the token encrypted by AES-GCM with a key in the Android Keystore (`speak_type_connection_key`). The speech and UI settings (output mode, language mode, talk mode, theme) are stored in the same preferences file.
 
 TLS is pinned: the HTTPS client validates the server certificate against the SHA-256 fingerprint scanned from the QR code (`X509TrustManager` plus `SSLContext`). A fingerprint mismatch fails the connection.
 
@@ -29,7 +29,7 @@ A foreground service with the `microphone` type. It owns one `SpeechRecognizer` 
 
 `DictationNotifications` owns the permanent ready notification in the shade; the service removes it while a session owns the shade and restores it when the session ends. `BootReceiver` re-posts the ready notification after reboot. `DictationTileService` is the Quick Settings tile entry point.
 
-Supported speech comes from Android's speech service. In **Online** mode the provider may process audio remotely; **Offline only** uses the on-device recognizer and never falls back to online.
+Speech comes from Android's speech service, preferring the on-device recognizer. If the service reports offline recognition unavailable (errors 12/13), the session retries once online with the same recognizer. Some on-device services return an empty final result after good partials; the last partial is then used as the transcript.
 
 ## Windows
 
@@ -81,7 +81,7 @@ Boundaries:
 ## Data flow
 
 1. Pairing: the PC shows a QR code containing host, port, bootstrap code, and fingerprint. The phone POSTs the code to `/v1/pair`, receives a session token, and stores it encrypted.
-2. Dictation: the phone recognises speech, POSTs partials to `/v1/preview` for the dashboard Live preview panel, then POSTs the final transcript (with a message id) to `/v1/send`. The PC types it once into the focused window and returns `{"ok": true}`.
+2. Dictation: the phone recognises speech, POSTs partials to `/v1/preview` for the dashboard Live preview panel, then POSTs the final transcript (with a message id) to `/v1/send`. The PC appends a trailing space and types it once into the focused window, then returns `{"ok": true}`.
 3. Update: the PC serves the newest complete APK it can find (Gradle output or `%LOCALAPPDATA%\SpeakType\speaktype.apk`). The phone compares SHA-256 via `/v1/app-release` and, if different, downloads via `/v1/app.apk`.
 
 ## Storage

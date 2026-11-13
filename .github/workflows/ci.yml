@@ -1,15 +1,39 @@
-name: Build Android APK
+name: CI
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  windows-tests:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: windows
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run tests
+        working-directory: windows
+        run: python -m pytest tests/ -q
+
+  android:
+    name: Android build
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -34,12 +58,10 @@ jobs:
         run: |
           mkdir -p android-app/app/keystore
           echo "$KEYSTORE_BASE64" | base64 -d > android-app/app/keystore/release.jks
-          ls -la android-app/app/keystore/
 
       - name: Build release APK
         working-directory: android-app
         env:
-          # Only sign with a real key when Secrets exist; otherwise fall back to debug key.
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_BASE64 != '' && 'app/keystore/release.jks' || '' }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -50,16 +72,20 @@ jobs:
         run: |
           cd android-app/app/build/outputs/apk
           sha256sum debug/app-debug.apk release/app-release.apk > SHA256SUMS.txt
-          cat SHA256SUMS.txt
 
-      - name: Save APK as a workflow artifact
+      - name: Save builds as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: speaktype-debug-apk
-          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          name: speaktype-android
+          path: |
+            android-app/app/build/outputs/apk/debug/app-debug.apk
+            android-app/app/build/outputs/apk/release/app-release.apk
+            android-app/app/build/outputs/apk/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Publish APK as a GitHub release
+      # Phones poll releases/tags/latest for in-app updates; keep it rolling on main.
+      - name: Publish rolling latest prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -69,29 +95,6 @@ jobs:
             android-app/app/build/outputs/apk/release/app-release.apk
             android-app/app/build/outputs/apk/SHA256SUMS.txt
           prerelease: true
-          make_latest: true
+          make_latest: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  windows-tests:
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install helper dependencies
-        working-directory: windows
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-
-      - name: Run helper tests
-        working-directory: windows
-        run: python -m pytest tests/ -q

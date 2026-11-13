@@ -42,13 +42,14 @@ cd android-app
 .\gradlew.bat assembleDebug
 ```
 
-CI mirrors these checks: `.github/workflows/build-android-apk.yml` builds the APK on Ubuntu and runs the Windows pytest suite on `windows-latest`.
+CI mirrors these checks: `.github/workflows/ci.yml` runs the Windows pytest suite on `windows-latest` and builds both APK variants on Ubuntu for every push to `main` and every pull request. `.github/workflows/release.yml` builds tagged releases (APKs + `SpeakType.exe` + checksums).
 
 ## Pull requests
 
 - Keep changes focused and minimal.
 - Add tests for new app behavior.
 - Do not commit build artifacts (`dist/`, `build/`, `*.apk`).
+- CI must pass: the Windows test suite and the Android build run on every PR.
 
 ## Commit conventions
 
@@ -60,5 +61,5 @@ CI mirrors these checks: `.github/workflows/build-android-apk.yml` builds the AP
 
 1. Bump `versionCode` in `android-app/app/build.gradle.kts` (and `versionName` if the release is user-visible). The signing key must stay the same — changing it forces an uninstall.
 2. Update `CHANGELOG.md` with the user-visible changes.
-3. Tag the release as `vX.Y.Z` (e.g. `v1.2.0`).
-4. GitHub Actions publishes the build as the `latest` prerelease and uploads the `speaktype-debug-apk` artifact.
+3. Tag the release as `vX.Y.Z` (e.g. `v1.2.0`) and push the tag.
+4. The Release workflow publishes a versioned GitHub release with both APKs, `SpeakType.exe`, and `SHA256SUMS.txt`, using the changelog section as release notes. Pushes to `main` separately refresh the rolling `latest` prerelease that phones poll for in-app updates.

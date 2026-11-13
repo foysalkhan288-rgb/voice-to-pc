@@ -61,7 +61,7 @@ Request:
 ```
 
 - `id`: message id, string up to 80 characters. Used for duplicate suppression.
-- `text`: transcript, non-empty after sanitising, up to 12,000 characters. Carriage returns, line feeds, and tabs are replaced with spaces; control characters below `U+0020` (except `U+00A0`) are stripped.
+- `text`: transcript, non-empty after sanitising, up to 12,000 characters. Carriage returns, line feeds, and tabs are replaced with spaces; control characters below `U+0020` (except `U+00A0`) are stripped. A single trailing space is appended unless the text already ends with a space or no-break space, so consecutive dictations do not stick together in the target field.
 
 Success `200`:
 
