@@ -368,7 +368,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
-        val root = FrameLayout(this).apply { setBackgroundColor(Palette.BACKGROUND) }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Palette.BACKGROUND)
+            clipChildren = false
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             root.setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
@@ -393,8 +397,9 @@ class MainActivity : AppCompatActivity() {
         val settingsColumn = pageColumn()
         homePage.addView(homeColumn, frameWrap())
         settingsPage.addView(settingsColumn, frameWrap())
-        root.addView(homePage, frameFull())
-        root.addView(settingsPage, frameFull())
+        val pages = FrameLayout(this)
+        pages.addView(homePage, frameFull())
+        pages.addView(settingsPage, frameFull())
 
         // ---- home header: label and connection on one line, the title full width below ----
         val header = LinearLayout(this).apply {
@@ -480,38 +485,6 @@ class MainActivity : AppCompatActivity() {
         )
         homeColumn.addView(updateBanner, matchWrap().apply { topMargin = space(2) })
 
-        // ---- the one control that matters -------------------------------------------------
-        talkButton = TalkButton(this)
-        talkButton.onTalkStart = { beginDictation() }
-        talkButton.onTalkStop = { finalizeListening() }
-        // A gesture the system interrupted must never send a half utterance.
-        talkButton.onTalkCancel = { cancelDictation() }
-        homeColumn.addView(
-            talkButton,
-            LinearLayout.LayoutParams(dp(240), dp(240)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = space(3)
-            },
-        )
-
-        modeTabs = SegmentedControl(this).apply {
-            setItems(listOf("Hold", "Tap"), if (holdMode) 0 else 1)
-            onSelect = { index ->
-                holdMode = index == 0
-                preferences.edit().putString(KEY_TALK_MODE, if (holdMode) "hold" else "tap").apply()
-                refreshUi()
-            }
-        }
-        homeColumn.addView(
-            modeTabs,
-            LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = space(1)
-            },
-        )
-        modeHintView = Design.caption(this, "").apply { gravity = Gravity.CENTER }
-        homeColumn.addView(modeHintView, matchWrap().apply { topMargin = space(1) })
-
         // ---- live status: a single line, no section label ---------------------------------
         val statusPanel = Design.panel(this).apply { minimumHeight = space(6) }
         val statusRow = LinearLayout(this).apply {
@@ -551,6 +524,44 @@ class MainActivity : AppCompatActivity() {
             ).apply { gravity = Gravity.CENTER },
             matchWrap().apply { topMargin = space(2) },
         )
+
+        // ---- the one control that matters, pinned low for the thumb -----------------------
+        // Flexible spacer: when the page is shorter than the screen the talk cluster
+        // sinks to the bottom instead of floating mid-page.
+        homeColumn.addView(
+            View(this),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, space(2), 1f),
+        )
+        talkButton = TalkButton(this)
+        talkButton.onTalkStart = { beginDictation() }
+        talkButton.onTalkStop = { finalizeListening() }
+        // A gesture the system interrupted must never send a half utterance.
+        talkButton.onTalkCancel = { cancelDictation() }
+        homeColumn.addView(
+            talkButton,
+            LinearLayout.LayoutParams(dp(240), dp(240)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = space(3)
+            },
+        )
+
+        modeTabs = SegmentedControl(this).apply {
+            setItems(listOf("Hold", "Tap"), if (holdMode) 0 else 1)
+            onSelect = { index ->
+                holdMode = index == 0
+                preferences.edit().putString(KEY_TALK_MODE, if (holdMode) "hold" else "tap").apply()
+                refreshUi()
+            }
+        }
+        homeColumn.addView(
+            modeTabs,
+            LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = space(1)
+            },
+        )
+        modeHintView = Design.caption(this, "").apply { gravity = Gravity.CENTER }
+        homeColumn.addView(modeHintView, matchWrap().apply { topMargin = space(1) })
 
         // ---- settings page: everything technical, in one calm stack -----------------------
         settingsColumn.addView(Design.title(this, "Settings"), matchWrap())
@@ -714,15 +725,15 @@ class MainActivity : AppCompatActivity() {
             matchWrap().apply { topMargin = space(2) },
         )
 
-        // ---- floating nav: two segments, always within thumb reach ------------------------
+        // ---- top nav: page switch up top so the talk button owns the bottom ---------------
         pageTabs = SegmentedControl(this).apply {
             setItems(listOf("Talk", "Settings"), 0)
             elevation = dp(8).toFloat()
             onSelect = { index -> if (index in 0..1) showPage(index) }
         }
         val nav = FrameLayout(this).apply {
-            setPadding(space(4), 0, space(4), space(3))
-            // Let the pill's elevation shadow fade into the bottom gutter instead of
+            setPadding(dp(Metric.GUTTER), space(1), dp(Metric.GUTTER), space(1))
+            // Let the pill's elevation shadow fade into the page instead of
             // ending on a hard clip line at the wrapper bounds.
             clipChildren = false
             clipToPadding = false
@@ -736,11 +747,14 @@ class MainActivity : AppCompatActivity() {
         )
         root.addView(
             nav,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
             ),
+        )
+        root.addView(
+            pages,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
         )
         setContentView(root)
     }
@@ -772,10 +786,10 @@ class MainActivity : AppCompatActivity() {
         LinearLayout.LayoutParams.WRAP_CONTENT,
     )
 
-    /** One scrollable page: gutters on the sides, room at the bottom for the floating nav. */
+    /** One scrollable page: gutters on the sides; the nav sits above, not below. */
     private fun pageColumn(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(Metric.GUTTER), space(3), dp(Metric.GUTTER), space(13))
+        setPadding(dp(Metric.GUTTER), space(2), dp(Metric.GUTTER), space(3))
     }
 
     private fun frameFull() = FrameLayout.LayoutParams(

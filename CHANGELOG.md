@@ -4,6 +4,12 @@ All notable changes to SpeakType are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses semantic versioning for the Android `versionName` and the `vX.Y.Z` git tags.
 
+## [v1.7.6] - 2026-11-12
+
+### Changed — phone app
+
+- The Talk/Settings switch moves to the top of the screen and the big talk button with its Hold/Tap tabs moves to the bottom, right under the thumb — no more reaching mid-screen to start dictating.
+
 ## [v1.7.5] - 2026-11-13
 
 ### Added — phone app
