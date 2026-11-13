@@ -50,7 +50,7 @@ jobs:
         run: java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleRelease
 
       - name: Save builds as workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: speaktype-android
           path: |
@@ -87,7 +87,7 @@ jobs:
           speaktype.py
 
       - name: Save exe as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: speaktype-windows
           path: windows/dist/SpeakType.exe
