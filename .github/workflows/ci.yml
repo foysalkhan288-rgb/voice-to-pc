@@ -86,7 +86,7 @@ jobs:
       # Phones poll releases/tags/latest for in-app updates; keep it rolling on main.
       - name: Publish rolling latest prerelease
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: latest
           name: Latest Android build
