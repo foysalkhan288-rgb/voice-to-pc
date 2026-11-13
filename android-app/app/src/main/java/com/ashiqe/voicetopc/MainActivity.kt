@@ -120,6 +120,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var discardButton: Button
     private lateinit var statusDot: TextView
     private lateinit var updateButton: Button
+    private lateinit var updateBanner: LinearLayout
+    private lateinit var updateBannerText: TextView
+    private lateinit var updateBannerAction: TextView
     private lateinit var updateView: TextView
     private lateinit var voiceDiagView: TextView
     private lateinit var permissionValue: TextView
@@ -445,6 +448,37 @@ class MainActivity : AppCompatActivity() {
             Design.title(this, "Speak. See it typed."),
             matchWrap().apply { topMargin = space(1) },
         )
+
+        updateBanner = Design.cardTinted(this, Palette.ACCENT_SOFT).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setOnClickListener { onUpdateButton() }
+        }
+        updateBanner.addView(
+            Design.dot(this, Palette.ACCENT),
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = space(1) },
+        )
+        updateBannerText = Design.value(this, "").apply {
+            setTextColor(Palette.TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+        }
+        updateBanner.addView(
+            updateBannerText,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        updateBannerAction = Design.caption(this, "Install").apply { setTextColor(Palette.ACCENT) }
+        updateBanner.addView(
+            updateBannerAction,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        homeColumn.addView(updateBanner, matchWrap().apply { topMargin = space(2) })
 
         // ---- the one control that matters -------------------------------------------------
         talkButton = TalkButton(this)
@@ -886,6 +920,17 @@ class MainActivity : AppCompatActivity() {
                 updateView.text = "Update ready · ${pending.size / 1024} KB · tap Install update"
             } else {
                 updateView.visibility = View.GONE
+            }
+        }
+        if (::updateBanner.isInitialized) {
+            val pending = availableUpdate
+            updateBanner.visibility = if (pending != null) View.VISIBLE else View.GONE
+            if (pending != null) {
+                updateBannerText.text =
+                    if (updateBusy) "Downloading the update…"
+                    else "Update ready · ${pending.size / 1024} KB"
+                updateBannerAction.text = if (updateBusy) "" else "Install"
+                updateBanner.isEnabled = !updateBusy
             }
         }
     }
@@ -1472,6 +1517,8 @@ class MainActivity : AppCompatActivity() {
             val installedCode = PackageInfoCompat.getLongVersionCode(installed)
             if (archiveCode < installedCode) {
                 file.delete()
+                availableUpdate = null
+                refreshUi()
                 setStatus(
                     "That build (version $archiveCode) is older than the installed app " +
                         "(version $installedCode), so it was not installed."

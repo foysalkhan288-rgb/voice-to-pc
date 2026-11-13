@@ -4,6 +4,12 @@ All notable changes to SpeakType are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses semantic versioning for the Android `versionName` and the `vX.Y.Z` git tags.
 
+## [v1.7.5] - 2026-11-13
+
+### Added — phone app
+
+- The home screen now shows an update notification card when a newer build is available (from the PC or GitHub), with a one-tap Install action — no need to open Settings to discover or install an update. The card hides itself once the installed app matches the offered build.
+
 ## [v1.7.4] - 2026-11-13
 
 ### Changed — PC app (1.3.1)
