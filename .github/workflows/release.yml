@@ -110,6 +110,14 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # upload-artifact keeps the debug/ and release/ subfolders; flatten them
+      # so checksums and release assets use plain file names.
+      - name: Flatten APK paths
+        run: |
+          cd dist
+          mv debug/app-debug.apk release/app-release.apk .
+          rmdir debug release
+
       - name: Generate checksums
         run: |
           cd dist
